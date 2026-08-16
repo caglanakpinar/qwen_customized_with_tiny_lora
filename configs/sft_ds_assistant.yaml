@@ -1,0 +1,70 @@
+# Supervised fine-tuning on the synthetic data-science assistant dataset.
+#
+# Build the dataset first:
+#     python -m data.synthetic.build
+#
+# Then:
+#     poetry run tiny-lora sft --config configs/sft_ds_assistant.yaml --no-quant
+
+model:
+  model_name_or_path: "Qwen/Qwen2.5-0.5B-Instruct"  # base model pulled from the Hugging Face Hub
+  load_in_4bit: false          # macOS: bitsandbytes is Linux/CUDA only
+  torch_dtype: "auto"          # let transformers pick the dtype the checkpoint was saved in
+  trust_remote_code: false     # Qwen2.5 ships standard modeling code; no custom code needed
+
+tinylora:
+  r: 2                         # SVD rank of the fixed random projection matrices (paper default)
+  u: 32                        # size of the trainable vector v; this is nearly all of what trains
+  weight_tying: 0.0            # per-module v vectors; 1.0 shares one v everywhere
+  target_modules:               # which attention projections get a TinyLoRA adapter
+    - q_proj
+    - v_proj
+  projection_seed: 42          # RNG seed for the fixed projection matrices; fixes reproducibility
+  init_weights: "uniform"      # how v is initialised before training starts
+  init_v_bound: 0.02           # +/- range for the uniform init of v
+
+data:
+  # "local" reads dataset_name/eval_dataset_name straight off disk. "gdrive" first downloads
+  # a zip from Google Drive into gdrive.cache_dir and extracts it there, then reads the same
+  # dataset_name/eval_dataset_name paths -- so once it's downloaded, both readers behave
+  # identically. Requires the `gdrive` extra: `poetry install -E gdrive`.
+  reader: "local"                 # "local" or "gdrive"
+  # A shard glob -- the 5 GB set is written across many files. Resolved relative to the
+  # working directory, so run from the repo root.
+  dataset_name: "data/synthetic/dataset/sft_train-*.jsonl"   # training shards
+  eval_dataset_name: "data/synthetic/dataset/sft_eval.jsonl" # held-out split, enables eval loss
+  # The full set is ~2M records. Start with a subset: TinyLoRA trains a few hundred scalars,
+  # so it saturates long before it has seen everything.
+  max_samples: 50000             # cap on training rows read from the glob (eval is not capped)
+  gdrive:
+    # File id (or full share URL) of the dataset zip on Google Drive. Share the file as
+    # "anyone with the link", then paste its id here. Only used when reader: "gdrive".
+    zip_file_id: null            # e.g. "1AbCDeFgHiJkLmNoPQRstuVWxyz"
+    # Where the zip is extracted to. Downloaded once and reused on later runs if this
+    # directory is already populated -- matches dataset_name/eval_dataset_name above.
+    cache_dir: "data/synthetic/dataset"
+
+training:
+  output_dir: "outputs/sft-ds-assistant"   # where checkpoints and the final adapter are written
+  num_train_epochs: 1          # with 50k samples one pass is already plenty of steps
+  per_device_train_batch_size: 2   # sequences per forward/backward pass, per device
+  per_device_eval_batch_size: 2    # sequences per eval batch, per device
+  gradient_accumulation_steps: 8   # effective batch size = train_batch_size * this
+  learning_rate: 2.0e-4        # peak LR for the TinyLoRA vector v (only a few hundred params)
+  max_seq_length: 1536         # the overview and failure-map answers are long
+  logging_steps: 10            # how often (in steps) training loss is logged
+  # Eval and checkpointing both run every single step. Precise, but eval_dataset_name's full
+  # split is scored after every step, which is much slower than the usual eval_steps: 100 --
+  # widen both (keeping save_steps a multiple of eval_steps) if training throughput matters
+  # more than per-step granularity.
+  eval_steps: 1                 # how often (in steps) eval loss is computed
+  save_steps: 1                 # how often (in steps) a checkpoint is written to output_dir
+  bf16: true                   # train in bfloat16; needs a GPU/accelerator that supports it
+  gradient_checkpointing: true # trade compute for memory by recomputing activations on backward
+  report_to: "none"            # disable external experiment trackers (e.g. wandb, tensorboard)
+  # Stop as soon as eval_loss stops improving, and reload the best checkpoint seen at the end
+  # instead of just the last one. patience=1 + threshold=0.0 is the strictest setting: training
+  # stops the moment a single eval isn't strictly better than the best eval_loss so far.
+  early_stopping: true
+  early_stopping_patience: 1
+  early_stopping_threshold: 0.0

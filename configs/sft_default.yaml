@@ -1,0 +1,35 @@
+model:
+  model_name_or_path: "Qwen/Qwen2.5-0.5B-Instruct"
+  load_in_4bit: true
+  torch_dtype: "auto"
+  trust_remote_code: false
+
+tinylora:
+  r: 2
+  u: 32
+  weight_tying: 0.0
+  target_modules:
+    - q_proj
+    - v_proj
+  projection_seed: 42
+  init_weights: "uniform"
+  init_v_bound: 0.02
+
+data:
+  dataset_name: "openai/gsm8k"
+  dataset_config: "main"
+  split: "train"
+  max_samples: 500
+
+training:
+  output_dir: "outputs/sft"
+  num_train_epochs: 1
+  per_device_train_batch_size: 2
+  gradient_accumulation_steps: 4
+  learning_rate: 2.0e-4
+  max_seq_length: 1024
+  logging_steps: 10
+  save_steps: 200
+  bf16: true
+  gradient_checkpointing: true
+  report_to: "none"
