@@ -19,6 +19,8 @@ tinylora:
   target_modules:               # which attention projections get a TinyLoRA adapter
     - q_proj
     - v_proj
+    - o_proj
+    - k_proj
   projection_seed: 42          # RNG seed for the fixed projection matrices; fixes reproducibility
   init_weights: "uniform"      # how v is initialised before training starts
   init_v_bound: 0.02           # +/- range for the uniform init of v
