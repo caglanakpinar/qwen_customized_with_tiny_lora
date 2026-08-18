@@ -241,7 +241,10 @@ def prepare_sft_eval_dataset(data_cfg: DataConfig, tokenizer) -> Dataset | None:
     """The eval split, if one is configured."""
     if not data_cfg.eval_dataset_name:
         return None
-    return prepare_sft_dataset(data_cfg, tokenizer, dataset_name=data_cfg.eval_dataset_name)
+    dataset = prepare_sft_dataset(data_cfg, tokenizer, dataset_name=data_cfg.eval_dataset_name)
+    if data_cfg.max_eval_samples is not None:
+        dataset = dataset.select(range(min(data_cfg.max_eval_samples, len(dataset))))
+    return dataset
 
 
 def prepare_grpo_dataset(data_cfg: DataConfig, dataset_name: str | None = None) -> Dataset:

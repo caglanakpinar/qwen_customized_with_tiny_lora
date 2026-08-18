@@ -6,6 +6,7 @@ import inspect
 from pathlib import Path
 
 from transformers import EarlyStoppingCallback
+from transformers.trainer_utils import get_last_checkpoint
 from trl import SFTConfig, SFTTrainer
 
 from tiny_lora.config import PipelineConfig, SFTTrainingConfig, build_pipeline_config, config_to_dict, load_yaml_config
@@ -98,7 +99,8 @@ def run_sft(config: PipelineConfig) -> str:
         processing_class=tokenizer,
         callbacks=callbacks,
     )
-    trainer.train()
+    last_checkpoint = get_last_checkpoint(str(output_dir))
+    trainer.train(resume_from_checkpoint=last_checkpoint)
     trainer.save_model(str(output_dir / "adapter"))
     tokenizer.save_pretrained(str(output_dir / "adapter"))
     return str(output_dir / "adapter")

@@ -46,6 +46,10 @@ class DataConfig:
     # Optional held-out split. A Hub repo id or a local .json/.jsonl path, as with
     # `dataset_name`. When set, SFT reports eval loss alongside training loss.
     eval_dataset_name: str | None = None
+    # Cap on rows read from eval_dataset_name -- unlike max_samples (training only), this
+    # applies to eval regardless of size, since scoring the full split on every eval_steps
+    # (or in `tiny-lora eval`, which loads two full models) is often too slow to be worth it.
+    max_eval_samples: int | None = None
     # Google Drive file id (or full share URL) of the dataset zip. Required when reader="gdrive".
     gdrive_zip_file_id: str | None = None
     # Where the zip is extracted to. Downloaded once and reused on later runs if already

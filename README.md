@@ -52,6 +52,15 @@ poetry run tiny-lora grpo \
   --weight-tying 1.0 \
   --max-samples 200 \
   --output-dir outputs/grpo-u32
+
+# Compare base-model vs checkpoint eval loss/perplexity on the configured eval split
+poetry run tiny-lora eval \
+  --config configs/sft_ds_assistant.yaml \
+  --adapter outputs/sft-ds-assistant/adapter \
+  --max-eval-samples 200
+
+# Interactive chat REPL against a trained adapter
+poetry run tiny-lora chat --adapter outputs/sft-ds-assistant/adapter --no-quant
 ```
 
 ### Commands
@@ -60,8 +69,16 @@ poetry run tiny-lora grpo \
 |---------|-------------|
 | `sft` | Supervised fine-tuning with TinyLoRA |
 | `grpo` | GRPO RL training with TinyLoRA |
+| `eval` | Compare base-model vs checkpoint eval loss/perplexity on the eval split |
+| `chat` | Interactive chat REPL against a trained adapter |
 | `info` | Print config and trainable parameter count |
 | `show-config` | Display a YAML config as JSON |
+
+> **Note:** `--adapter` takes any saved adapter or checkpoint dir, e.g. `outputs/sft-ds-assistant/adapter`
+> (written once SFT finishes) or an intermediate `outputs/sft-ds-assistant/checkpoint-500`. The base
+> model is read automatically from the adapter's `adapter_config.json`. `eval` scores the full
+> `data.eval_dataset_name` split by default — set `data.max_eval_samples` (or pass `--max-eval-samples`)
+> to cap it, since it loads and scores two full models (base + checkpoint).
 
 ## Project Structure
 
@@ -84,7 +101,9 @@ llm_with_tiny_lora/
     ├── data.py             # Dataset preparation (gsm8k, chat JSONL, shard globs)
     ├── rewards.py          # GRPO reward functions
     ├── train_sft.py        # SFT pipeline
-    └── train_grpo.py       # GRPO pipeline
+    ├── train_grpo.py       # GRPO pipeline
+    ├── eval.py             # Base-model vs checkpoint eval loss/perplexity
+    └── chat.py             # Interactive chat REPL against a trained adapter
 ```
 
 ## Data-Science Assistant Dataset
@@ -137,6 +156,7 @@ data:
   dataset_name: "data/synthetic/dataset/sft_train-*.jsonl"
   eval_dataset_name: "data/synthetic/dataset/sft_eval.jsonl"   # enables eval loss during SFT
   max_samples: 50000
+  max_eval_samples: 200   # cap the eval split; unset scores it in full (used by SFT and `eval`)
 ```
 
 ## References

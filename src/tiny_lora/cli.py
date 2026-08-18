@@ -161,6 +161,39 @@ def chat_cmd(
     )
 
 
+@cli.command("eval")
+@click.option(
+    "--config",
+    "config_path",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=DEFAULT_SFT_CONFIG,
+    show_default=True,
+    help="YAML config file (supplies the eval split, base model, and eval batch/seq settings).",
+)
+@click.option(
+    "--adapter",
+    "adapter_path",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    required=True,
+    help="Saved adapter or checkpoint dir, e.g. outputs/sft-ds-assistant/adapter "
+    "or outputs/sft-ds-assistant/checkpoint-500.",
+)
+@click.option(
+    "--max-eval-samples",
+    type=int,
+    default=None,
+    help="Cap the eval split to this many rows (overrides data.max_eval_samples).",
+)
+def eval_cmd(config_path: Path, adapter_path: Path, max_eval_samples: int | None) -> None:
+    """Compare base-model vs checkpoint eval loss/perplexity on the configured eval split."""
+    from tiny_lora.eval import run_eval
+
+    overrides: dict = {}
+    if max_eval_samples is not None:
+        overrides.setdefault("data", {})["max_eval_samples"] = max_eval_samples
+    run_eval(config_path, adapter_path, overrides)
+
+
 @cli.command("info")
 @click.option(
     "--config",

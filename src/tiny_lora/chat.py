@@ -2,45 +2,14 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import click
 import torch
 
-from tiny_lora.model import load_peft_adapter, load_tokenizer
+from tiny_lora.model import load_adapter_tokenizer, load_peft_adapter, resolve_adapter_base_model
 
 EXIT_WORDS = {"exit", "quit"}
-
-
-def _resolve_base_model_name(adapter_path: Path) -> str:
-    """Read the base model id out of the adapter's own config.
-
-    Every saved adapter -- the final one under `<output_dir>/adapter` and each periodic
-    `checkpoint-N` -- carries an `adapter_config.json` with `base_model_name_or_path`, so the
-    base model normally never needs to be typed by hand.
-    """
-    adapter_config_path = adapter_path / "adapter_config.json"
-    if not adapter_config_path.exists():
-        raise FileNotFoundError(
-            f"No adapter_config.json found in {adapter_path}. Point --adapter at a saved "
-            "adapter or checkpoint directory, e.g. outputs/sft-ds-assistant/adapter or "
-            "outputs/sft-ds-assistant/checkpoint-500."
-        )
-    base_model_name = json.loads(adapter_config_path.read_text()).get("base_model_name_or_path")
-    if not base_model_name:
-        raise ValueError(f"{adapter_config_path} has no base_model_name_or_path.")
-    return base_model_name
-
-
-def _load_chat_tokenizer(adapter_path: Path, base_model_name: str, trust_remote_code: bool):
-    try:
-        return load_tokenizer(str(adapter_path), trust_remote_code=trust_remote_code)
-    except OSError:
-        # Periodic checkpoint-N dirs may not carry tokenizer files -- the final `adapter`
-        # dir does (train_sft.py saves it there explicitly), but fall back to the base
-        # model's tokenizer so checkpoint-N still works.
-        return load_tokenizer(base_model_name, trust_remote_code=trust_remote_code)
 
 
 def run_chat(
@@ -53,10 +22,10 @@ def run_chat(
     trust_remote_code: bool = False,
 ) -> None:
     """Load a trained adapter and hand control to an interactive read-generate-print loop."""
-    base_model_name = base_model_override or _resolve_base_model_name(adapter_path)
+    base_model_name = base_model_override or resolve_adapter_base_model(adapter_path)
 
     click.echo(f"Loading {base_model_name} with adapter {adapter_path} ...")
-    tokenizer = _load_chat_tokenizer(adapter_path, base_model_name, trust_remote_code)
+    tokenizer = load_adapter_tokenizer(adapter_path, base_model_name, trust_remote_code)
     model = load_peft_adapter(
         base_model_name,
         str(adapter_path),
