@@ -79,6 +79,12 @@ poetry run tiny-lora chat --adapter outputs/sft-ds-assistant/adapter --no-quant
 > model is read automatically from the adapter's `adapter_config.json`. `eval` scores the full
 > `data.eval_dataset_name` split by default — set `data.max_eval_samples` (or pass `--max-eval-samples`)
 > to cap it, since it loads and scores two full models (base + checkpoint).
+>
+> While a run is still in progress (no `adapter` dir yet) or to grab whichever checkpoint is most
+> recent without counting steps yourself, resolve it with:
+> ```bash
+> poetry run tiny-lora chat --adapter "$(ls -dt outputs/sft-ds-assistant/checkpoint-*/ | head -1)" --no-quant
+> ```
 
 ## Project Structure
 
@@ -89,11 +95,6 @@ llm_with_tiny_lora/
 │   ├── sft_default.yaml        # SFT defaults (gsm8k)
 │   ├── grpo_default.yaml       # GRPO defaults (gsm8k)
 │   └── sft_ds_assistant.yaml   # SFT on the synthetic data-science set
-├── data/                   # Knowledge stores + synthetic dataset — see data/README.md
-│   ├── data_engineer_dbs/       68 concepts  → Chroma + FAISS
-│   ├── feature_engineering_dbs/ 43 concepts  → Chroma + FAISS
-│   ├── data_science_dbs/        52 concepts  → Chroma + FAISS
-│   └── synthetic/               the dataset generator, and its output
 └── src/tiny_lora/
     ├── cli.py              # Click CLI entry point
     ├── config.py           # Config dataclasses & YAML loader
@@ -105,28 +106,6 @@ llm_with_tiny_lora/
     ├── eval.py             # Base-model vs checkpoint eval loss/perplexity
     └── chat.py             # Interactive chat REPL against a trained adapter
 ```
-
-## Data-Science Assistant Dataset
-
-`data/` holds three ChromaDB knowledge stores — data engineering, feature engineering and data
-science, **163 hand-written concepts across 36 topics** — and a generator that turns them into an
-instruction-tuning set for a data-science assistant: concept Q&A plus runnable pandas, matplotlib,
-scikit-learn, statistics and SQL tasks.
-
-```bash
-poetry install --with data          # chromadb, faiss-cpu, numpy
-
-python -m data.data_science_dbs.dataset   # rebuild the data-science store
-python -m data.synthetic.build            # generate the training set (5 GB by default)
-python -m data.synthetic.build --target-gb 0.05   # or a small one to look at
-
-poetry run tiny-lora sft --config configs/sft_ds_assistant.yaml --no-quant
-```
-
-Generation is deterministic and offline — no API key, no model in the loop. Answers are assembled
-from facet text read back out of Chroma, so changing a knowledge store changes the dataset with no
-code change. See [data/README.md](data/README.md) for how the stores are shaped, where the variety
-comes from, and how the generated code is verified.
 
 ## Configuration
 
@@ -158,6 +137,24 @@ data:
   max_samples: 50000
   max_eval_samples: 200   # cap the eval split; unset scores it in full (used by SFT and `eval`)
 ```
+
+`configs/sft_ds_assistant.yaml` trains on a synthetically generated data-science assistant corpus —
+concept Q&A plus runnable pandas/matplotlib/scikit-learn/statistics/SQL tasks. Rather than shipping
+that dataset in the repo, `data.reader: "gdrive"` points at a zip on Google Drive by its file id and
+downloads it on first use:
+
+```yaml
+data:
+  reader: "gdrive"
+  dataset_name: "data/synthetic/dataset/sft_train-*.jsonl"
+  eval_dataset_name: "data/synthetic/dataset/sft_eval.jsonl"
+  gdrive:
+    zip_file_id: 1d9sIZg95DlBDPSyvWfIGpHtfIcHpYoZB   # share the zip "anyone with the link", paste its id here
+    cache_dir: "data/synthetic/dataset"               # extracted here once, then reused on later runs
+```
+
+Requires the `gdrive` extra (`poetry install -E gdrive`). `dataset_name`/`eval_dataset_name` still
+point at the paths the zip extracts to — once downloaded, it's read exactly like a local dataset.
 
 ## References
 
