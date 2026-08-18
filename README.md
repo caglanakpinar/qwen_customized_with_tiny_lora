@@ -95,6 +95,10 @@ llm_with_tiny_lora/
 │   ├── sft_default.yaml        # SFT defaults (gsm8k)
 │   ├── grpo_default.yaml       # GRPO defaults (gsm8k)
 │   └── sft_ds_assistant.yaml   # SFT on the synthetic data-science set
+├── outputs/                 # Checkpoints + saved adapters, written by `sft`/`grpo` (per output_dir)
+│   └── sft-ds-assistant/
+│       ├── checkpoint-N/        # periodic checkpoint, written every training.save_steps
+│       └── adapter/             # final adapter, written once training completes
 └── src/tiny_lora/
     ├── cli.py              # Click CLI entry point
     ├── config.py           # Config dataclasses & YAML loader
