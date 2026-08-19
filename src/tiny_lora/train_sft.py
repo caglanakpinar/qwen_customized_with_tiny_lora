@@ -59,6 +59,7 @@ def run_sft(config: PipelineConfig) -> str:
     training_args = SFTConfig(
         output_dir=str(output_dir),
         num_train_epochs=train_cfg.num_train_epochs,
+        max_steps=train_cfg.max_steps,
         per_device_train_batch_size=train_cfg.per_device_train_batch_size,
         gradient_accumulation_steps=train_cfg.gradient_accumulation_steps,
         learning_rate=train_cfg.learning_rate,

@@ -61,6 +61,9 @@ class DataConfig:
 class SFTTrainingConfig:
     output_dir: str = "outputs/sft"
     num_train_epochs: int = 1
+    # Caps total optimizer steps regardless of dataset size / num_train_epochs; -1 (the
+    # HF Trainer default) means "no cap, run the full num_train_epochs".
+    max_steps: int = -1
     per_device_train_batch_size: int = 2
     gradient_accumulation_steps: int = 4
     learning_rate: float = 2e-4

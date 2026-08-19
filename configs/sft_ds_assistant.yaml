@@ -21,6 +21,9 @@ tinylora:
     - v_proj
     - o_proj
     - k_proj
+    - gate_proj
+    - up_proj
+    - down_proj
   projection_seed: 42          # RNG seed for the fixed projection matrices; fixes reproducibility
   init_weights: "uniform"      # how v is initialised before training starts
   init_v_bound: 0.02           # +/- range for the uniform init of v
@@ -49,10 +52,16 @@ data:
 training:
   output_dir: "outputs/sft-ds-assistant"   # where checkpoints and the final adapter are written
   num_train_epochs: 1          # with 50k samples one pass is already plenty of steps
+  max_steps: 20                # cap the run at 20 optimizer steps instead of the full ~2000 (quick test)
   per_device_train_batch_size: 2   # sequences per forward/backward pass, per device
   per_device_eval_batch_size: 2    # sequences per eval batch, per device
   gradient_accumulation_steps: 8   # effective batch size = train_batch_size * this
-  learning_rate: 2.0e-4        # peak LR for the TinyLoRA vector v (only a few hundred params)
+  learning_rate: 1.0e-2         # peak LR for the TinyLoRA vector v (only a few hundred params) --
+                                # bumped 50x from 2e-4: with AdamW the first-step update is
+                                # ~lr per param regardless of gradient scale, and v's init range
+                                # is +/-0.02 (init_v_bound below), so 2e-4 barely moved it.
+                                # NB: needs the decimal point -- PyYAML's default loader parses
+                                # "1e-2" (no ".") as a string, not a float, and AdamW chokes on it
   max_seq_length: 1536         # the overview and failure-map answers are long
   logging_steps: 10            # how often (in steps) training loss is logged
   # Eval and checkpointing both run every single step. Precise, but eval_dataset_name's full
