@@ -6,10 +6,22 @@ from pathlib import Path
 
 import click
 import torch
+from langchain_core.chat_history import InMemoryChatMessageHistory
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from tiny_lora.model import load_adapter_tokenizer, load_peft_adapter, resolve_adapter_base_model
 
 EXIT_WORDS = {"exit", "quit"}
+
+_ROLE_BY_MESSAGE_TYPE = {
+    HumanMessage: "user",
+    AIMessage: "assistant",
+    SystemMessage: "system",
+}
+
+
+def _to_chat_template_messages(history: InMemoryChatMessageHistory) -> list[dict[str, str]]:
+    return [{"role": _ROLE_BY_MESSAGE_TYPE[type(m)], "content": m.content} for m in history.messages]
 
 
 def run_chat(
@@ -34,7 +46,9 @@ def run_chat(
     )
     model.eval()
 
-    messages = [{"role": "system", "content": system_prompt}] if system_prompt else []
+    history = InMemoryChatMessageHistory()
+    if system_prompt:
+        history.add_message(SystemMessage(content=system_prompt))
     click.echo("Chat ready. Type a prompt, or 'exit'/'quit' to leave (Ctrl-D also works).\n")
 
     while True:
@@ -51,9 +65,9 @@ def run_chat(
             click.echo("Exiting chat.")
             return
 
-        messages.append({"role": "user", "content": text})
+        history.add_message(HumanMessage(content=text))
         prompt_text = tokenizer.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=True
+            _to_chat_template_messages(history), tokenize=False, add_generation_prompt=True
         )
         inputs = tokenizer(prompt_text, return_tensors="pt").to(model.device)
 
@@ -69,4 +83,4 @@ def run_chat(
         reply_ids = output_ids[0, inputs["input_ids"].shape[1] :]
         reply = tokenizer.decode(reply_ids, skip_special_tokens=True).strip()
         click.echo(f"Assistant> {reply}\n")
-        messages.append({"role": "assistant", "content": reply})
+        history.add_message(AIMessage(content=reply))

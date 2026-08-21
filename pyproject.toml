@@ -24,6 +24,7 @@ protobuf = "^4.25.0"
 feature-store-agent = {git = "https://github.com/caglanakpinar/feature-store-agent.git"}
 gdown = { version = "^5.2.0", optional = true }
 pathlib = "^1.0.1"
+langchain-core = "^0.3.0"
 
 [tool.poetry.extras]
 quant = ["bitsandbytes"]
