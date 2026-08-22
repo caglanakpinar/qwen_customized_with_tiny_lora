@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import click
 import torch
@@ -102,6 +103,107 @@ def _compact_history(
     return running_summary, True
 
 
+def load_chat_backend(
+    adapter_path: Path,
+    base_model_override: str | None,
+    load_in_4bit: bool,
+    trust_remote_code: bool = False,
+    db_path: Path | None = None,
+) -> tuple[Any, Any, KnowledgeStore | None]:
+    """Resolve the base model, load the tokenizer + adapter, and optionally a knowledge store.
+
+    Shared by the CLI REPL (`run_chat`) and the web backend (`web/app.py`), so both talk to the
+    model the same way instead of duplicating the loading sequence.
+    """
+    base_model_name = base_model_override or resolve_adapter_base_model(adapter_path)
+    tokenizer = load_adapter_tokenizer(adapter_path, base_model_name, trust_remote_code)
+    model = load_peft_adapter(
+        base_model_name,
+        str(adapter_path),
+        load_in_4bit=load_in_4bit,
+        trust_remote_code=trust_remote_code,
+    )
+    model.eval()
+
+    knowledge_store = load_knowledge_store(db_path) if db_path is not None else None
+    return model, tokenizer, knowledge_store
+
+
+class ChatSession:
+    """One conversation's worth of state: history, running summary, and its persistence bookkeeping.
+
+    `send` performs exactly the steps the CLI REPL's loop body used to run inline (retrieve
+    context, generate, compact history, persist the summary every `WRITE_EVERY_N_SUMMARIES`th
+    fold) so a web backend can hold one `ChatSession` per browser session and get identical
+    behavior to the terminal chat.
+    """
+
+    def __init__(
+        self,
+        model: Any,
+        tokenizer: Any,
+        adapter_path: Path,
+        system_prompt: str | None = None,
+        max_new_tokens: int = 512,
+        temperature: float = 0.7,
+        summarize_after_turns: int = 6,
+        keep_recent_turns: int = 2,
+        memory_dir: Path = Path("outputs/chat_memory"),
+        knowledge_store: KnowledgeStore | None = None,
+    ) -> None:
+        self.model = model
+        self.tokenizer = tokenizer
+        self.adapter_path = adapter_path
+        self.system_prompt = system_prompt
+        self.max_new_tokens = max_new_tokens
+        self.temperature = temperature
+        self.summarize_after_turns = summarize_after_turns
+        self.keep_recent_turns = keep_recent_turns
+        self.memory_dir = memory_dir
+        self.knowledge_store = knowledge_store
+
+        self.history = InMemoryChatMessageHistory()
+        if system_prompt:
+            self.history.add_message(SystemMessage(content=system_prompt))
+        self.running_summary: str | None = None
+        self.summary_event_count = 0
+
+    def send(self, text: str) -> str:
+        """Add `text` as a user turn and return the generated reply."""
+        self.history.add_message(HumanMessage(content=text))
+
+        generation_messages = self.history.messages
+        if self.knowledge_store is not None:
+            context_message = _retrieved_context_message(self.knowledge_store, text)
+            if context_message is not None:
+                generation_messages = [*self.history.messages[:-1], context_message, self.history.messages[-1]]
+
+        reply = _generate(self.model, self.tokenizer, generation_messages, self.max_new_tokens, self.temperature)
+        self.history.add_message(AIMessage(content=reply))
+
+        self.running_summary, folded = _compact_history(
+            self.history,
+            self.model,
+            self.tokenizer,
+            self.system_prompt,
+            self.running_summary,
+            self.summarize_after_turns,
+            self.keep_recent_turns,
+        )
+        if folded:
+            self.summary_event_count += 1
+            if self.summary_event_count % WRITE_EVERY_N_SUMMARIES == 0:
+                record_summary(
+                    self.model,
+                    self.tokenizer,
+                    self.running_summary,
+                    self.summary_event_count,
+                    self.memory_dir,
+                    source=str(self.adapter_path),
+                )
+        return reply
+
+
 def run_chat(
     adapter_path: Path,
     base_model_override: str | None,
@@ -116,28 +218,25 @@ def run_chat(
     db_path: Path | None = None,
 ) -> None:
     """Load a trained adapter and hand control to an interactive read-generate-print loop."""
-    base_model_name = base_model_override or resolve_adapter_base_model(adapter_path)
-
-    click.echo(f"Loading {base_model_name} with adapter {adapter_path} ...")
-    tokenizer = load_adapter_tokenizer(adapter_path, base_model_name, trust_remote_code)
-    model = load_peft_adapter(
-        base_model_name,
-        str(adapter_path),
-        load_in_4bit=load_in_4bit,
-        trust_remote_code=trust_remote_code,
-    )
-    model.eval()
-
-    knowledge_store = None
+    click.echo(f"Loading adapter {adapter_path} ...")
     if db_path is not None:
         click.echo(f"Loading knowledge base from {db_path} ...")
-        knowledge_store = load_knowledge_store(db_path)
+    model, tokenizer, knowledge_store = load_chat_backend(
+        adapter_path, base_model_override, load_in_4bit, trust_remote_code, db_path
+    )
 
-    history = InMemoryChatMessageHistory()
-    if system_prompt:
-        history.add_message(SystemMessage(content=system_prompt))
-    running_summary: str | None = None
-    summary_event_count = 0
+    session = ChatSession(
+        model=model,
+        tokenizer=tokenizer,
+        adapter_path=adapter_path,
+        system_prompt=system_prompt,
+        max_new_tokens=max_new_tokens,
+        temperature=temperature,
+        summarize_after_turns=summarize_after_turns,
+        keep_recent_turns=keep_recent_turns,
+        memory_dir=memory_dir,
+        knowledge_store=knowledge_store,
+    )
     click.echo("Chat ready. Type a prompt, or 'exit'/'quit' to leave (Ctrl-D also works).\n")
 
     while True:
@@ -154,35 +253,5 @@ def run_chat(
             click.echo("Exiting chat.")
             return
 
-        history.add_message(HumanMessage(content=text))
-
-        generation_messages = history.messages
-        if knowledge_store is not None:
-            context_message = _retrieved_context_message(knowledge_store, text)
-            if context_message is not None:
-                generation_messages = [*history.messages[:-1], context_message, history.messages[-1]]
-
-        reply = _generate(model, tokenizer, generation_messages, max_new_tokens, temperature)
+        reply = session.send(text)
         click.echo(f"Assistant> {reply}\n")
-        history.add_message(AIMessage(content=reply))
-
-        running_summary, folded = _compact_history(
-            history,
-            model,
-            tokenizer,
-            system_prompt,
-            running_summary,
-            summarize_after_turns,
-            keep_recent_turns,
-        )
-        if folded:
-            summary_event_count += 1
-            if summary_event_count % WRITE_EVERY_N_SUMMARIES == 0:
-                record_summary(
-                    model,
-                    tokenizer,
-                    running_summary,
-                    summary_event_count,
-                    memory_dir,
-                    source=str(adapter_path),
-                )
