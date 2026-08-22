@@ -7,7 +7,7 @@
 #     poetry run tiny-lora sft --config configs/sft_ds_assistant.yaml --no-quant
 
 model:
-  model_name_or_path: "Qtwen/Qwen2.5-0.5B-Instruc"  # base model pulled from the Hugging Face Hub
+  model_name_or_path: "Qwen/Qwen2.5-0.5B-Instruct"  # base model pulled from the Hugging Face Hub
   load_in_4bit: false          # macOS: bitsandbytes is Linux/CUDA only
   torch_dtype: "auto"          # let transformers pick the dtype the checkpoint was saved in
   trust_remote_code: false     # Qwen2.5 ships standard modeling code; no custom code needed
@@ -40,7 +40,7 @@ data:
   eval_dataset_name: "data/synthetic/dataset/sft_eval.jsonl" # held-out split, enables eval loss
   # The full set is ~2M records. Start with a subset: TinyLoRA trains a few hundred scalars,
   # so it saturates long before it has seen everything.
-  max_samples: 50000             # cap on training rows read from the glob (eval is not capped)
+  max_samples: 1000             # cap on training rows read from the glob (eval is not capped)
   gdrive:
     # File id (or full share URL) of the dataset zip on Google Drive. Share the file as
     # "anyone with the link", then paste its id here. Only used when reader: "gdrive".
@@ -52,7 +52,7 @@ data:
 training:
   output_dir: "outputs/sft-ds-assistant"   # where checkpoints and the final adapter are written
   num_train_epochs: 1          # with 50k samples one pass is already plenty of steps
-  max_steps: 20                # cap the run at 20 optimizer steps instead of the full ~2000 (quick test)
+  max_steps: 5                 # cap the run at 20 optimizer steps instead of the full ~2000 (quick test)
   per_device_train_batch_size: 2   # sequences per forward/backward pass, per device
   per_device_eval_batch_size: 2    # sequences per eval batch, per device
   gradient_accumulation_steps: 8   # effective batch size = train_batch_size * this
