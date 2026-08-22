@@ -201,6 +201,193 @@ def chat_cmd(
     )
 
 
+@cli.command("serve")
+@click.option(
+    "--adapter",
+    "adapter_path",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    required=True,
+    help="Saved adapter or checkpoint dir, e.g. outputs/sft-ds-assistant/adapter "
+    "or outputs/sft-ds-assistant/checkpoint-500.",
+)
+@click.option("--model", "base_model", default=None, help="Override base model (default: read from the adapter).")
+@click.option("--no-quant", is_flag=True, help="Disable 4-bit quantization (use bf16).")
+@click.option("--max-new-tokens", type=int, default=512, show_default=True, help="Max tokens generated per reply.")
+@click.option("--temperature", type=float, default=0.7, show_default=True, help="Sampling temperature; 0 for greedy.")
+@click.option("--system", "system_prompt", default=None, help="Optional system prompt to prepend.")
+@click.option("--trust-remote-code", is_flag=True, help="Trust remote code for the base model.")
+@click.option(
+    "--summarize-after",
+    "summarize_after_turns",
+    type=int,
+    default=6,
+    show_default=True,
+    help="Fold older turns into a running key-points summary once history exceeds this many turns.",
+)
+@click.option(
+    "--keep-recent",
+    "keep_recent_turns",
+    type=int,
+    default=2,
+    show_default=True,
+    help="Number of most recent turns to keep verbatim when summarizing.",
+)
+@click.option(
+    "--memory-dir",
+    "memory_dir",
+    type=click.Path(file_okay=False, path_type=Path),
+    default=Path("outputs/chat_memory"),
+    show_default=True,
+    help="Where the FAISS index and Chroma collection of persisted running-summaries are written.",
+)
+@click.option(
+    "--db-path",
+    "db_path",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=None,
+    help="Knowledge base directory, e.g. data/data_science_dbs. Must contain a faiss_index/ and a "
+    "chroma_db/; every chat turn is retrieval-augmented with matches from it.",
+)
+@click.option("--host", default="127.0.0.1", show_default=True, help="Host interface to bind the web server to.")
+@click.option("--port", type=int, default=8000, show_default=True, help="Port to serve the chat UI on.")
+def serve_cmd(
+    adapter_path: Path,
+    base_model: str | None,
+    no_quant: bool,
+    max_new_tokens: int,
+    temperature: float,
+    system_prompt: str | None,
+    trust_remote_code: bool,
+    summarize_after_turns: int,
+    keep_recent_turns: int,
+    memory_dir: Path,
+    db_path: Path | None,
+    host: str,
+    port: int,
+) -> None:
+    """Serve a browser chat UI (web/) backed by a trained TinyLoRA adapter."""
+    import sys
+
+    import uvicorn
+
+    repo_root = Path(__file__).resolve().parents[2]
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
+    from web.app import create_app
+
+    click.echo(f"Loading adapter {adapter_path} ...")
+    if db_path is not None:
+        click.echo(f"Loading knowledge base from {db_path} ...")
+    app = create_app(
+        adapter_path=adapter_path,
+        base_model_override=base_model,
+        load_in_4bit=not no_quant,
+        trust_remote_code=trust_remote_code,
+        max_new_tokens=max_new_tokens,
+        temperature=temperature,
+        system_prompt=system_prompt,
+        summarize_after_turns=summarize_after_turns,
+        keep_recent_turns=keep_recent_turns,
+        memory_dir=memory_dir,
+        db_path=db_path,
+    )
+    click.echo(f"Chat UI ready at http://{host}:{port}\n")
+    uvicorn.run(app, host=host, port=port)
+
+
+@cli.command("chat-api")
+@click.option(
+    "--adapter",
+    "adapter_path",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    required=True,
+    help="Saved adapter or checkpoint dir, e.g. outputs/sft-ds-assistant/adapter "
+    "or outputs/sft-ds-assistant/checkpoint-500.",
+)
+@click.option("--model", "base_model", default=None, help="Override base model (default: read from the adapter).")
+@click.option("--no-quant", is_flag=True, help="Disable 4-bit quantization (use bf16).")
+@click.option("--max-new-tokens", type=int, default=512, show_default=True, help="Max tokens generated per reply.")
+@click.option("--temperature", type=float, default=0.7, show_default=True, help="Sampling temperature; 0 for greedy.")
+@click.option("--system", "system_prompt", default=None, help="Optional system prompt to prepend.")
+@click.option("--trust-remote-code", is_flag=True, help="Trust remote code for the base model.")
+@click.option(
+    "--summarize-after",
+    "summarize_after_turns",
+    type=int,
+    default=6,
+    show_default=True,
+    help="Fold older turns into a running key-points summary once history exceeds this many turns.",
+)
+@click.option(
+    "--keep-recent",
+    "keep_recent_turns",
+    type=int,
+    default=2,
+    show_default=True,
+    help="Number of most recent turns to keep verbatim when summarizing.",
+)
+@click.option(
+    "--memory-dir",
+    "memory_dir",
+    type=click.Path(file_okay=False, path_type=Path),
+    default=Path("outputs/chat_memory"),
+    show_default=True,
+    help="Where the FAISS index and Chroma collection of persisted running-summaries are written.",
+)
+@click.option(
+    "--db-path",
+    "db_path",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=None,
+    help="Knowledge base directory, e.g. data/data_science_dbs. Must contain a faiss_index/ and a "
+    "chroma_db/; every chat turn is retrieval-augmented with matches from it.",
+)
+@click.option("--model-name", "model_name", default="tinylora-chat", show_default=True, help="KServe model name.")
+@click.option("--http-port", type=int, default=8080, show_default=True, help="Port KServe serves the API on.")
+def chat_api_cmd(
+    adapter_path: Path,
+    base_model: str | None,
+    no_quant: bool,
+    max_new_tokens: int,
+    temperature: float,
+    system_prompt: str | None,
+    trust_remote_code: bool,
+    summarize_after_turns: int,
+    keep_recent_turns: int,
+    memory_dir: Path,
+    db_path: Path | None,
+    model_name: str,
+    http_port: int,
+) -> None:
+    """Serve a payload/response chat inference API via KServe, backed by a trained TinyLoRA adapter.
+
+    POST /v1/models/<model-name>:predict with {"instances": [{"message": "...", "session_id":
+    "optional"}]} -> {"predictions": [{"session_id": "...", "reply": "..."}]}. Requires kserve,
+    which is not installed by `poetry install` (it conflicts with this project's protobuf pin) --
+    install it separately in this environment, e.g. `pip install kserve`.
+    """
+    from tiny_lora.chat_api import run_chat_api  # local: kserve isn't a project dependency
+
+    click.echo(f"Loading adapter {adapter_path} ...")
+    if db_path is not None:
+        click.echo(f"Loading knowledge base from {db_path} ...")
+    run_chat_api(
+        adapter_path=adapter_path,
+        base_model_override=base_model,
+        load_in_4bit=not no_quant,
+        max_new_tokens=max_new_tokens,
+        temperature=temperature,
+        system_prompt=system_prompt,
+        trust_remote_code=trust_remote_code,
+        summarize_after_turns=summarize_after_turns,
+        keep_recent_turns=keep_recent_turns,
+        memory_dir=memory_dir,
+        db_path=db_path,
+        model_name=model_name,
+        http_port=http_port,
+    )
+
+
 @cli.command("eval")
 @click.option(
     "--config",
