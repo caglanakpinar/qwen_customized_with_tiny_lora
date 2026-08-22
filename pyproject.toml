@@ -25,6 +25,9 @@ feature-store-agent = {git = "https://github.com/caglanakpinar/feature-store-age
 gdown = { version = "^5.2.0", optional = true }
 pathlib = "^1.0.1"
 langchain-core = "^0.3.0"
+chromadb = "^1.5.9"
+faiss-cpu = "^1.15"
+numpy = "^2.0"
 
 [tool.poetry.extras]
 quant = ["bitsandbytes"]

@@ -61,6 +61,20 @@ poetry run tiny-lora eval \
 
 # Interactive chat REPL against a trained adapter
 poetry run tiny-lora chat --adapter outputs/sft-ds-assistant/adapter --no-quant
+
+# Chat with every option set explicitly
+poetry run tiny-lora chat \
+  --adapter outputs/sft-ds-assistant/adapter \
+  --model Qwen/Qwen2.5-0.5B-Instruct \
+  --no-quant \
+  --max-new-tokens 512 \
+  --temperature 0.7 \
+  --system "You are a senior data scientist." \
+  --trust-remote-code \
+  --summarize-after 6 \
+  --keep-recent 2 \
+  --memory-dir outputs/chat_memory \
+  --db-path data/data_science_dbs
 ```
 
 ### Commands
@@ -86,6 +100,26 @@ poetry run tiny-lora chat --adapter outputs/sft-ds-assistant/adapter --no-quant
 > poetry run tiny-lora chat --adapter "$(ls -dt outputs/sft-ds-assistant/checkpoint-*/ | head -1)" --no-quant
 > ```
 
+### `chat` arguments
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--adapter` (required) | — | Saved adapter or checkpoint dir, e.g. `outputs/sft-ds-assistant/adapter` or `outputs/sft-ds-assistant/checkpoint-500`. |
+| `--model` | read from the adapter | Override the base model instead of resolving it from `adapter_config.json`. |
+| `--no-quant` | off | Disable 4-bit quantization and load in bf16 (required on macOS, where bitsandbytes is Linux/CUDA-only). |
+| `--max-new-tokens` | `512` | Max tokens generated per reply. |
+| `--temperature` | `0.7` | Sampling temperature; `0` for greedy decoding. |
+| `--system` | none | Optional system prompt prepended to the conversation. |
+| `--trust-remote-code` | off | Trust remote code when loading the base model. |
+| `--summarize-after` | `6` | Fold older turns into a running key-points summary once history exceeds this many turns. |
+| `--keep-recent` | `2` | Number of most recent turns kept verbatim (unsummarized) when folding. |
+| `--memory-dir` | `outputs/chat_memory` | Where persisted running-summaries are written — see below. |
+| `--db-path` | none | Knowledge base dir, e.g. `data/data_science_dbs` (must contain `faiss_index/` and `chroma_db/`, built by that store's `dataset.py`). When set, every turn is retrieval-augmented with the top matches from it. |
+
+Every 5th time the chat folds turns into a summary, that summary is embedded with the chat model's
+own hidden states and appended to a FAISS index (`<memory-dir>/faiss_index/`) and a Chroma collection
+(`<memory-dir>/chroma_db/`), so long conversations leave a searchable trail of what was discussed.
+
 ## Project Structure
 
 ```
@@ -108,7 +142,8 @@ llm_with_tiny_lora/
     ├── train_sft.py        # SFT pipeline
     ├── train_grpo.py       # GRPO pipeline
     ├── eval.py             # Base-model vs checkpoint eval loss/perplexity
-    └── chat.py             # Interactive chat REPL against a trained adapter
+    ├── chat.py             # Interactive chat REPL against a trained adapter
+    └── chat_memory.py      # Persists chat summaries to FAISS/Chroma, embedded via the chat model
 ```
 
 ## Configuration

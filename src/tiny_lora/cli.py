@@ -138,6 +138,38 @@ def grpo_cmd(
 @click.option("--temperature", type=float, default=0.7, show_default=True, help="Sampling temperature; 0 for greedy.")
 @click.option("--system", "system_prompt", default=None, help="Optional system prompt to prepend.")
 @click.option("--trust-remote-code", is_flag=True, help="Trust remote code for the base model.")
+@click.option(
+    "--summarize-after",
+    "summarize_after_turns",
+    type=int,
+    default=6,
+    show_default=True,
+    help="Fold older turns into a running key-points summary once history exceeds this many turns.",
+)
+@click.option(
+    "--keep-recent",
+    "keep_recent_turns",
+    type=int,
+    default=2,
+    show_default=True,
+    help="Number of most recent turns to keep verbatim when summarizing.",
+)
+@click.option(
+    "--memory-dir",
+    "memory_dir",
+    type=click.Path(file_okay=False, path_type=Path),
+    default=Path("outputs/chat_memory"),
+    show_default=True,
+    help="Where the FAISS index and Chroma collection of persisted running-summaries are written.",
+)
+@click.option(
+    "--db-path",
+    "db_path",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=None,
+    help="Knowledge base directory, e.g. data/data_science_dbs. Must contain a faiss_index/ and a "
+    "chroma_db/; every chat turn is retrieval-augmented with matches from it.",
+)
 def chat_cmd(
     adapter_path: Path,
     base_model: str | None,
@@ -146,6 +178,10 @@ def chat_cmd(
     temperature: float,
     system_prompt: str | None,
     trust_remote_code: bool,
+    summarize_after_turns: int,
+    keep_recent_turns: int,
+    memory_dir: Path,
+    db_path: Path | None,
 ) -> None:
     """Open an interactive chat REPL with a trained TinyLoRA adapter."""
     from tiny_lora.chat import run_chat
@@ -157,7 +193,11 @@ def chat_cmd(
         max_new_tokens=max_new_tokens,
         temperature=temperature,
         system_prompt=system_prompt,
+        summarize_after_turns=summarize_after_turns,
+        keep_recent_turns=keep_recent_turns,
         trust_remote_code=trust_remote_code,
+        memory_dir=memory_dir,
+        db_path=db_path,
     )
 
 
