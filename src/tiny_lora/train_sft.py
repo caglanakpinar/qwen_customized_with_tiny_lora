@@ -5,13 +5,28 @@ from __future__ import annotations
 import inspect
 from pathlib import Path
 
-from transformers import EarlyStoppingCallback
+import torch
+from transformers import EarlyStoppingCallback, TrainerCallback
 from transformers.trainer_utils import get_last_checkpoint
 from trl import SFTConfig, SFTTrainer
 
 from tiny_lora.config import PipelineConfig, SFTTrainingConfig, build_pipeline_config, config_to_dict, load_yaml_config
 from tiny_lora.data import prepare_sft_dataset, prepare_sft_eval_dataset
 from tiny_lora.model import load_tinylora_model, load_tokenizer
+
+
+class EmptyMPSCacheCallback(TrainerCallback):
+    """Release cached MPS blocks at the end of every training step.
+
+    `on_step_end` fires immediately before the trainer's log/save/evaluate block, which is where
+    macOS runs out of memory: the cache still held from the training step, plus the eval forward's
+    own logits (batch x seq_len x vocab, which `ForCausalLMLoss` then upcasts to fp32), overshoots
+    the MPS allocation ceiling. Handing the cached blocks back first gives eval that headroom.
+    """
+
+    def on_step_end(self, args, state, control, **kwargs) -> None:
+        if torch.backends.mps.is_available():
+            torch.mps.empty_cache()
 
 
 def run_sft(config: PipelineConfig) -> str:
@@ -81,16 +96,14 @@ def run_sft(config: PipelineConfig) -> str:
         greater_is_better=False if early_stopping else None,
     )
 
-    callbacks = (
-        [
+    callbacks: list[TrainerCallback] = [EmptyMPSCacheCallback()]
+    if early_stopping:
+        callbacks.append(
             EarlyStoppingCallback(
                 early_stopping_patience=train_cfg.early_stopping_patience,
                 early_stopping_threshold=train_cfg.early_stopping_threshold,
             )
-        ]
-        if early_stopping
-        else None
-    )
+        )
 
     trainer = SFTTrainer(
         model=model,
