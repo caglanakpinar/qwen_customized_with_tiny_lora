@@ -8,6 +8,14 @@ from pathlib import Path
 import torch
 from transformers import EarlyStoppingCallback, TrainerCallback
 from transformers.trainer_utils import get_last_checkpoint
+from transformers.utils import (
+    ADAPTER_SAFE_WEIGHTS_NAME,
+    ADAPTER_WEIGHTS_NAME,
+    SAFE_WEIGHTS_INDEX_NAME,
+    SAFE_WEIGHTS_NAME,
+    WEIGHTS_INDEX_NAME,
+    WEIGHTS_NAME,
+)
 from trl import SFTConfig, SFTTrainer
 
 from tiny_lora.config import PipelineConfig, SFTTrainingConfig, build_pipeline_config, config_to_dict, load_yaml_config
@@ -27,6 +35,39 @@ class EmptyMPSCacheCallback(TrainerCallback):
     def on_step_end(self, args, state, control, **kwargs) -> None:
         if torch.backends.mps.is_available():
             torch.mps.empty_cache()
+
+
+# The weight files a resumable checkpoint may carry. Adapter runs write the `adapter_*` pair rather
+# than a full model, and sharded saves write an index instead of a single blob, so any one of these
+# is enough for the trainer to restore from.
+_CHECKPOINT_WEIGHT_FILES = (
+    WEIGHTS_NAME,
+    SAFE_WEIGHTS_NAME,
+    WEIGHTS_INDEX_NAME,
+    SAFE_WEIGHTS_INDEX_NAME,
+    ADAPTER_WEIGHTS_NAME,
+    ADAPTER_SAFE_WEIGHTS_NAME,
+)
+
+
+def resolve_resume_checkpoint(output_dir: Path) -> str | None:
+    """Return the last checkpoint in `output_dir` to resume from, or None to train from scratch.
+
+    `get_last_checkpoint` matches on the `checkpoint-N` directory name alone, so a directory left
+    behind by an interrupted or partially-deleted run still counts as the latest checkpoint -- and
+    the trainer then refuses it with "Can't find a valid checkpoint at ...". Confirm the weights are
+    actually there and start from the beginning when they are not.
+    """
+    last_checkpoint = get_last_checkpoint(str(output_dir))
+    if last_checkpoint is None:
+        return None
+
+    checkpoint_dir = Path(last_checkpoint)
+    if any((checkpoint_dir / name).is_file() for name in _CHECKPOINT_WEIGHT_FILES):
+        return last_checkpoint
+
+    print(f"Ignoring {last_checkpoint}: no weights in it. Training from the beginning.")
+    return None
 
 
 def run_sft(config: PipelineConfig) -> str:
@@ -113,8 +154,7 @@ def run_sft(config: PipelineConfig) -> str:
         processing_class=tokenizer,
         callbacks=callbacks,
     )
-    last_checkpoint = get_last_checkpoint(str(output_dir))
-    trainer.train(resume_from_checkpoint=last_checkpoint)
+    trainer.train(resume_from_checkpoint=resolve_resume_checkpoint(output_dir))
     trainer.save_model(str(output_dir / "adapter"))
     tokenizer.save_pretrained(str(output_dir / "adapter"))
     return str(output_dir / "adapter")
