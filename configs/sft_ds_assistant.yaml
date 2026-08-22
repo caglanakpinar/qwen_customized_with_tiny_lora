@@ -33,14 +33,17 @@ data:
   # a zip from Google Drive into gdrive.cache_dir and extracts it there, then reads the same
   # dataset_name/eval_dataset_name paths -- so once it's downloaded, both readers behave
   # identically. Requires the `gdrive` extra: `poetry install -E gdrive`.
-  reader: "local"                 # "local" or "gdrive"
+  reader: "gdrive"                 # "local" or "gdrive"
   # A shard glob -- the 5 GB set is written across many files. Resolved relative to the
   # working directory, so run from the repo root.
   dataset_name: "data/synthetic/dataset/sft_train-*.jsonl"   # training shards
   eval_dataset_name: "data/synthetic/dataset/sft_eval.jsonl" # held-out split, enables eval loss
   # The full set is ~2M records. Start with a subset: TinyLoRA trains a few hundred scalars,
   # so it saturates long before it has seen everything.
-  max_samples: 1000             # cap on training rows read from the glob (eval is not capped)
+  max_samples: 1000             # cap on training rows read from the glob
+  # Cap the held-out split too. Eval runs every eval_steps and scores the whole split each time,
+  # so on a short quick-test run the full 239 rows cost far more wall time than the training does.
+  max_eval_samples: 64
   gdrive:
     # File id (or full share URL) of the dataset zip on Google Drive. Share the file as
     # "anyone with the link", then paste its id here. Only used when reader: "gdrive".
@@ -54,7 +57,10 @@ training:
   num_train_epochs: 1          # with 50k samples one pass is already plenty of steps
   max_steps: 5                 # cap the run at 20 optimizer steps instead of the full ~2000 (quick test)
   per_device_train_batch_size: 2   # sequences per forward/backward pass, per device
-  per_device_eval_batch_size: 2    # sequences per eval batch, per device
+  # Kept at 1: the loss upcasts the logits (batch x seq_len x vocab) to fp32, and at vocab 151936
+  # and max_seq_length 1536 that is ~1.9 GB per sequence pair -- enough to blow the MPS ceiling on
+  # top of what the preceding training step still holds. Raise it on a CUDA box with real headroom.
+  per_device_eval_batch_size: 1    # sequences per eval batch, per device
   gradient_accumulation_steps: 8   # effective batch size = train_batch_size * this
   learning_rate: 1.0e-2         # peak LR for the TinyLoRA vector v (only a few hundred params) --
                                 # bumped 50x from 2e-4: with AdamW the first-step update is
