@@ -123,6 +123,7 @@ def run_sft(config: PipelineConfig) -> str:
         logging_steps=train_cfg.logging_steps,
         save_strategy="steps",
         save_steps=train_cfg.save_steps,
+        save_total_limit=train_cfg.save_total_limit,
         bf16=train_cfg.bf16,
         gradient_checkpointing=train_cfg.gradient_checkpointing,
         report_to=train_cfg.report_to,

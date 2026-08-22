@@ -8,7 +8,7 @@
 
 model:
   model_name_or_path: "Qwen/Qwen2.5-0.5B-Instruct"  # base model pulled from the Hugging Face Hub
-  load_in_4bit: false          # macOS: bitsandbytes is Linux/CUDA only
+  load_in_4bit: false          # full bf16; `--no-quant` forces this off regardless
   torch_dtype: "auto"          # let transformers pick the dtype the checkpoint was saved in
   trust_remote_code: false     # Qwen2.5 ships standard modeling code; no custom code needed
 
@@ -40,10 +40,11 @@ data:
   eval_dataset_name: "data/synthetic/dataset/sft_eval.jsonl" # held-out split, enables eval loss
   # The full set is ~2M records. Start with a subset: TinyLoRA trains a few hundred scalars,
   # so it saturates long before it has seen everything.
-  max_samples: 1000             # cap on training rows read from the glob
-  # Cap the held-out split too. Eval runs every eval_steps and scores the whole split each time,
-  # so on a short quick-test run the full 239 rows cost far more wall time than the training does.
-  max_eval_samples: 64
+  max_samples: 50000            # cap on training rows read from the glob
+  # Cap the held-out split too: eval runs every eval_steps and scores the whole split each time.
+  # 500 rows is enough for an eval_loss stable enough to early-stop on, and on an A100 it costs
+  # seconds. Drop it back to a few dozen only when running somewhere much smaller.
+  max_eval_samples: 500
   gdrive:
     # File id (or full share URL) of the dataset zip on Google Drive. Share the file as
     # "anyone with the link", then paste its id here. Only used when reader: "gdrive".
@@ -55,13 +56,16 @@ data:
 training:
   output_dir: "outputs/sft-ds-assistant"   # where checkpoints and the final adapter are written
   num_train_epochs: 1          # with 50k samples one pass is already plenty of steps
-  max_steps: 5                 # cap the run at 20 optimizer steps instead of the full ~2000 (quick test)
-  per_device_train_batch_size: 2   # sequences per forward/backward pass, per device
-  # Kept at 1: the loss upcasts the logits (batch x seq_len x vocab) to fp32, and at vocab 151936
-  # and max_seq_length 1536 that is ~1.9 GB per sequence pair -- enough to blow the MPS ceiling on
-  # top of what the preceding training step still holds. Raise it on a CUDA box with real headroom.
-  per_device_eval_batch_size: 1    # sequences per eval batch, per device
-  gradient_accumulation_steps: 8   # effective batch size = train_batch_size * this
+  # max_steps overrides num_train_epochs. At batch 8 x grad_accum 4 the effective batch is 32, so
+  # max_samples: 50000 is ~1562 steps per pass and 5000 steps is a little over 3 passes -- enough
+  # repetition to converge on without grinding the same rows dozens of times.
+  max_steps: 5000              # cap the run at 5000 optimizer steps instead of the full ~2000
+  per_device_train_batch_size: 8   # sequences per forward/backward pass, per device
+  # The loss upcasts the logits (batch x seq_len x vocab) to fp32, and at vocab 151936 and
+  # max_seq_length 1536 that is ~0.9 GB per sequence in fp32 on top of the bf16 copy -- so eval at
+  # batch 8 costs ~11 GB of the card on its own. Comfortable on a 40GB A100, not on a small GPU.
+  per_device_eval_batch_size: 8    # sequences per eval batch, per device
+  gradient_accumulation_steps: 4   # effective batch size = train_batch_size * this
   learning_rate: 1.0e-2         # peak LR for the TinyLoRA vector v (only a few hundred params) --
                                 # bumped 50x from 2e-4: with AdamW the first-step update is
                                 # ~lr per param regardless of gradient scale, and v's init range
@@ -70,18 +74,26 @@ training:
                                 # "1e-2" (no ".") as a string, not a float, and AdamW chokes on it
   max_seq_length: 1536         # the overview and failure-map answers are long
   logging_steps: 10            # how often (in steps) training loss is logged
-  # Eval and checkpointing both run every single step. Precise, but eval_dataset_name's full
-  # split is scored after every step, which is much slower than the usual eval_steps: 100 --
-  # widen both (keeping save_steps a multiple of eval_steps) if training throughput matters
-  # more than per-step granularity.
-  eval_steps: 1                 # how often (in steps) eval loss is computed
-  save_steps: 1                 # how often (in steps) a checkpoint is written to output_dir
+  # Every 100 steps over a 5000-step run: 50 evals and at most 50 checkpoints. Evaluating every
+  # 10 steps instead would score the held-out split 500 times for very little extra signal.
+  # save_steps must stay a round multiple of eval_steps, because early_stopping's
+  # load_best_model_at_end needs a checkpoint at every eval it ranks.
+  eval_steps: 100               # how often (in steps) eval loss is computed
+  save_steps: 100               # how often (in steps) a checkpoint is written to output_dir
+  # Keep only the most recent few checkpoints (~16 MB each, mostly the bundled tokenizer copy).
+  # The best-scoring checkpoint is retained regardless, so load_best_model_at_end still works.
+  save_total_limit: 5
   bf16: true                   # train in bfloat16; needs a GPU/accelerator that supports it
-  gradient_checkpointing: true # trade compute for memory by recomputing activations on backward
+  # Off: this recomputes activations on the backward pass to save memory, at roughly a 30-40%
+  # throughput cost. That is the right trade on a memory-bound device and the wrong one here,
+  # where the activations fit. Turn it back on if a larger batch or longer sequence runs out.
+  gradient_checkpointing: false
   report_to: "none"            # disable external experiment trackers (e.g. wandb, tensorboard)
-  # Stop as soon as eval_loss stops improving, and reload the best checkpoint seen at the end
-  # instead of just the last one. patience=1 + threshold=0.0 is the strictest setting: training
-  # stops the moment a single eval isn't strictly better than the best eval_loss so far.
+  # Stop once eval_loss stops improving, and reload the best checkpoint seen at the end instead of
+  # just the last one. patience=1 is the strictest possible setting -- it halts on the first eval
+  # that isn't strictly better -- which on a small eval split scoring a few hundred trainable
+  # scalars fires on ordinary noise, ending the run almost immediately. patience=3 rides out that
+  # jitter so the run reaches max_steps unless the loss is genuinely flat.
   early_stopping: true
-  early_stopping_patience: 1
+  early_stopping_patience: 3
   early_stopping_threshold: 0.0

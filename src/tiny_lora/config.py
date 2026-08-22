@@ -71,6 +71,11 @@ class SFTTrainingConfig:
     logging_steps: int = 10
     save_steps: int = 200
     eval_steps: int = 100
+    # Cap on checkpoint directories kept on disk; older ones are deleted as new ones are written.
+    # None keeps every checkpoint, which on a long run with frequent saves is what fills the disk.
+    # The best checkpoint is exempt whenever early_stopping is on, so capping this never costs the
+    # model that load_best_model_at_end restores.
+    save_total_limit: int | None = None
     per_device_eval_batch_size: int = 2
     bf16: bool = True
     gradient_checkpointing: bool = True
