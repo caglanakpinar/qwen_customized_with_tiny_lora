@@ -53,18 +53,23 @@ poetry run tiny-lora grpo \
   --max-samples 200 \
   --output-dir outputs/grpo-u32
 
+# --adapter below is outputs/sft-ds-assistant/adapter/ (written once SFT completes) or, while a
+# run is still in progress or was interrupted early, the newest checkpoint-N/ under the same dir:
+ADAPTER="outputs/sft-ds-assistant/adapter"
+[ -d "$ADAPTER" ] || ADAPTER="$(ls -dt outputs/sft-ds-assistant/checkpoint-*/ 2>/dev/null | head -1)"
+
 # Compare base-model vs checkpoint eval loss/perplexity on the configured eval split
 poetry run tiny-lora eval \
   --config configs/sft_ds_assistant.yaml \
-  --adapter outputs/sft-ds-assistant/adapter \
+  --adapter "$ADAPTER" \
   --max-eval-samples 200
 
 # Interactive chat REPL against a trained adapter
-poetry run tiny-lora chat --adapter outputs/sft-ds-assistant/adapter --no-quant
+poetry run tiny-lora chat --adapter "$ADAPTER" --no-quant
 
 # Chat with every option set explicitly
 poetry run tiny-lora chat \
-  --adapter outputs/sft-ds-assistant/adapter \
+  --adapter "$ADAPTER" \
   --model Qwen/Qwen2.5-0.5B-Instruct \
   --no-quant \
   --max-new-tokens 512 \
@@ -75,6 +80,12 @@ poetry run tiny-lora chat \
   --keep-recent 2 \
   --memory-dir outputs/chat_memory \
   --db-path data/data_science_dbs
+
+# Browser chat UI against a trained adapter (same options as `chat`, plus --host/--port)
+poetry run tiny-lora serve --adapter "$ADAPTER" --no-quant
+
+# KServe payload/response chat inference API (same options as `chat`, plus --model-name/--http-port)
+poetry run tiny-lora chat-api --adapter "$ADAPTER" --no-quant
 ```
 
 ### Commands
@@ -85,20 +96,18 @@ poetry run tiny-lora chat \
 | `grpo` | GRPO RL training with TinyLoRA |
 | `eval` | Compare base-model vs checkpoint eval loss/perplexity on the eval split |
 | `chat` | Interactive chat REPL against a trained adapter |
+| `serve` | Browser chat UI (`web/`) against a trained adapter |
+| `chat-api` | KServe payload/response chat inference API against a trained adapter |
 | `info` | Print config and trainable parameter count |
 | `show-config` | Display a YAML config as JSON |
 
 > **Note:** `--adapter` takes any saved adapter or checkpoint dir, e.g. `outputs/sft-ds-assistant/adapter`
-> (written once SFT finishes) or an intermediate `outputs/sft-ds-assistant/checkpoint-500`. The base
-> model is read automatically from the adapter's `adapter_config.json`. `eval` scores the full
-> `data.eval_dataset_name` split by default — set `data.max_eval_samples` (or pass `--max-eval-samples`)
-> to cap it, since it loads and scores two full models (base + checkpoint).
->
-> While a run is still in progress (no `adapter` dir yet) or to grab whichever checkpoint is most
-> recent without counting steps yourself, resolve it with:
-> ```bash
-> poetry run tiny-lora chat --adapter "$(ls -dt outputs/sft-ds-assistant/checkpoint-*/ | head -1)" --no-quant
-> ```
+> (written once SFT finishes) or an intermediate `outputs/sft-ds-assistant/checkpoint-500` (written
+> every `training.save_steps`, so one exists as soon as the first checkpoint is saved — no need to
+> wait for the run to finish or complete every `max_steps`). The base model is read automatically
+> from the adapter's `adapter_config.json`. `eval` scores the full `data.eval_dataset_name` split by
+> default — set `data.max_eval_samples` (or pass `--max-eval-samples`) to cap it, since it loads and
+> scores two full models (base + checkpoint).
 
 ### `chat` arguments
 
@@ -120,6 +129,46 @@ Every 5th time the chat folds turns into a summary, that summary is embedded wit
 own hidden states and appended to a FAISS index (`<memory-dir>/faiss_index/`) and a Chroma collection
 (`<memory-dir>/chroma_db/`), so long conversations leave a searchable trail of what was discussed.
 
+### `serve`: browser chat UI
+
+`serve` takes every `chat` argument above (same model/summary/memory/knowledge-base options — one
+model is loaded once at startup and shared across browser tabs, each tab getting its own session via a
+`session_id` held in `localStorage`) plus:
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--host` | `127.0.0.1` | Host interface to bind the web server to. |
+| `--port` | `8000` | Port to serve the chat UI on. |
+
+The frontend lives under [`web/`](web/) — `web/app.py` is a small FastAPI app (`GET /`, `POST
+/api/chat`, `POST /api/reset`) and `web/static/` is a vanilla HTML/CSS/JS chat interface with no
+build step.
+
+### `chat-api`: KServe inference API
+
+`chat-api` takes every `chat` argument above (one model loaded once at startup, one `ChatSession`
+per `session_id`, identical generation/summarization/retrieval behavior) plus:
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--model-name` | `tinylora-chat` | KServe model name; requests go to `/v1/models/<model-name>:predict`. |
+| `--http-port` | `8080` | Port KServe serves the API on. |
+
+```bash
+curl http://127.0.0.1:8080/v1/models/tinylora-chat:predict \
+  -H "Content-Type: application/json" \
+  -d '{"instances": [{"message": "What is precision at k?"}]}'
+# -> {"predictions": [{"session_id": "...", "reply": "..."}]}
+# pass that session_id back on the next call to continue the same conversation
+```
+
+This wraps [`src/tiny_lora/chat_api.py`](src/tiny_lora/chat_api.py)'s `ChatModel` (a
+`kserve.Model`) so the adapter can be deployed as a standard KServe `InferenceService` on
+Kubernetes. **`kserve` is not installed by `poetry install`** — it pins `protobuf>=6`, which
+conflicts with this project's `protobuf ^4.25.0` (needed by transformers/sentencepiece). Install it
+separately in whichever environment runs `chat-api`, e.g. `pip install kserve` (the same
+arrangement `grpo` uses for `vllm`).
+
 ## Project Structure
 
 ```
@@ -133,6 +182,9 @@ llm_with_tiny_lora/
 │   └── sft-ds-assistant/
 │       ├── checkpoint-N/        # periodic checkpoint, written every training.save_steps
 │       └── adapter/             # final adapter, written once training completes
+├── web/                     # Browser chat UI, served by `tiny-lora serve`
+│   ├── app.py                  # FastAPI backend (/, /api/chat, /api/reset)
+│   └── static/                  # HTML/CSS/JS chat frontend, no build step
 └── src/tiny_lora/
     ├── cli.py              # Click CLI entry point
     ├── config.py           # Config dataclasses & YAML loader
@@ -142,8 +194,10 @@ llm_with_tiny_lora/
     ├── train_sft.py        # SFT pipeline
     ├── train_grpo.py       # GRPO pipeline
     ├── eval.py             # Base-model vs checkpoint eval loss/perplexity
-    ├── chat.py             # Interactive chat REPL against a trained adapter
-    └── chat_memory.py      # Persists chat summaries to FAISS/Chroma, embedded via the chat model
+    ├── chat.py             # Chat session logic (ChatSession) + CLI REPL, shared with web/app.py
+    ├── chat_memory.py      # Persists chat summaries to FAISS/Chroma, embedded via the chat model
+    ├── knowledge_db.py     # Queries the offline FAISS/Chroma knowledge stores for retrieval
+    └── chat_api.py         # KServe payload/response inference API (`chat-api`), shared ChatSession
 ```
 
 ## Configuration
