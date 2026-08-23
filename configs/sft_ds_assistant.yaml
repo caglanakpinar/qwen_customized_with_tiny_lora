@@ -14,7 +14,11 @@ model:
 
 tinylora:
   r: 2                         # SVD rank of the fixed random projection matrices (paper default)
-  u: 32                        # size of the trainable vector v; this is nearly all of what trains
+  # Size of the trainable vector v -- this is nearly all of what trains, and the ceiling on what
+  # the adapter can express. Raised 4x from 32: at u=32 the run trained 5,376 scalars (32 x 7
+  # modules x 24 layers) and both train and eval loss stalled together around 1.85-1.87 with no
+  # gap between them, which is underfitting, not overfitting. u=128 trains 21,504.
+  u: 128
   weight_tying: 0.0            # per-module v vectors; 1.0 shares one v everywhere
   target_modules:               # which attention projections get a TinyLoRA adapter
     - q_proj
