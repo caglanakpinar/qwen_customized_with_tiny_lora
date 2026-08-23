@@ -57,29 +57,46 @@ training:
   output_dir: "outputs/sft-ds-assistant"   # where checkpoints and the final adapter are written
   num_train_epochs: 1          # with 50k samples one pass is already plenty of steps
   # max_steps overrides num_train_epochs. At batch 8 x grad_accum 4 the effective batch is 32, so
-  # max_samples: 50000 is ~1562 steps per pass and 5000 steps is a little over 3 passes -- enough
-  # repetition to converge on without grinding the same rows dozens of times.
-  max_steps: 15000              # cap the run at 15000 optimizer steps instead of the full ~2000
+  # max_samples: 50000 is ~1562 steps per pass, and 15000 steps is ~9.6 passes over the subset.
+  max_steps: 15000              # cap the run at 15000 optimizer steps
   per_device_train_batch_size: 8   # sequences per forward/backward pass, per device
   # The loss upcasts the logits (batch x seq_len x vocab) to fp32, and at vocab 151936 and
   # max_seq_length 1536 that is ~0.9 GB per sequence in fp32 on top of the bf16 copy -- so eval at
   # batch 8 costs ~11 GB of the card on its own. Comfortable on a 40GB A100, not on a small GPU.
   per_device_eval_batch_size: 8    # sequences per eval batch, per device
   gradient_accumulation_steps: 4   # effective batch size = train_batch_size * this
-  learning_rate: 1.0e-2         # peak LR for the TinyLoRA vector v (only a few hundred params) --
-                                # bumped 50x from 2e-4: with AdamW the first-step update is
-                                # ~lr per param regardless of gradient scale, and v's init range
-                                # is +/-0.02 (init_v_bound below), so 2e-4 barely moved it.
-                                # NB: needs the decimal point -- PyYAML's default loader parses
-                                # "1e-2" (no ".") as a string, not a float, and AdamW chokes on it
+  # Peak LR for the TinyLoRA vector v. NB: needs the decimal point -- PyYAML's default loader
+  # parses "2e-3" (no ".") as a string, not a float, and AdamW chokes on it.
+  #
+  # Pulled back 5x from 1.0e-2. With AdamW the per-step update is ~lr per param regardless of
+  # gradient scale, so at 1e-2 every step moved each scalar of v by up to half its whole init
+  # range (+/-0.02). The 5000-step run showed exactly what that does: train loss sat at 1.90-1.85
+  # from step 1000 to step 4000 and only started falling again in the last few hundred steps, as
+  # the linear decay finally took the LR under 1e-3. The optimizer was not converging, it was
+  # random-walking until the schedule shut it down.
+  learning_rate: 2.0e-3
+  # Hold a moderate LR through the middle of the run rather than decaying straight to zero.
+  lr_scheduler_type: "cosine"
+  # 450 steps (3% of max_steps) ramping in from 0, instead of landing the first optimizer step at
+  # the full peak LR. Rescale this by hand if max_steps changes -- it is an absolute step count,
+  # since transformers 5.x no longer accepts a warmup_ratio.
+  warmup_steps: 450
+  # Tighter than the HF default of 1.0. Logged grad norms on the last run swung between 0.55 and
+  # 4.7 batch to batch, so an outlier batch was landing a much larger update than a typical one.
+  max_grad_norm: 0.5
+  # v starts near zero already; decay here would fight the only thing training is moving.
+  weight_decay: 0.0
+  # AdamW default. Kept explicit because it is the knob that sets how much the update size is
+  # smoothed across noisy batches -- lower it only if v stops responding at all.
+  adam_beta2: 0.999
   max_seq_length: 1536         # the overview and failure-map answers are long
   logging_steps: 10            # how often (in steps) training loss is logged
-  # Every 100 steps over a 5000-step run: 50 evals and at most 50 checkpoints. Evaluating every
-  # 10 steps instead would score the held-out split 500 times for very little extra signal.
-  # save_steps must stay a round multiple of eval_steps, because early_stopping's
-  # load_best_model_at_end needs a checkpoint at every eval it ranks.
-  eval_steps: 100               # how often (in steps) eval loss is computed
-  save_steps: 100               # how often (in steps) a checkpoint is written to output_dir
+  # Every 250 steps over a 15000-step run: 60 evals. Scoring every 100 steps as before would run
+  # 150 of them, and on a cosine schedule the gap between neighbouring evals is small enough that
+  # the extra ones mostly measure noise. save_steps must stay a round multiple of eval_steps,
+  # because early_stopping's load_best_model_at_end needs a checkpoint at every eval it ranks.
+  eval_steps: 250               # how often (in steps) eval loss is computed
+  save_steps: 250               # how often (in steps) a checkpoint is written to output_dir
   # Keep only the most recent few checkpoints (~16 MB each, mostly the bundled tokenizer copy).
   # The best-scoring checkpoint is retained regardless, so load_best_model_at_end still works.
   save_total_limit: 5
@@ -93,7 +110,8 @@ training:
   # just the last one. patience=1 is the strictest possible setting -- it halts on the first eval
   # that isn't strictly better -- which on a small eval split scoring a few hundred trainable
   # scalars fires on ordinary noise, ending the run almost immediately. patience=3 rides out that
-  # jitter so the run reaches max_steps unless the loss is genuinely flat.
+  # jitter so the run reaches max_steps unless the loss is genuinely flat. At 250-step evals,
+  # patience 5 means the run only stops after ~1250 steps with no new best eval_loss.
   early_stopping: true
-  early_stopping_patience: 3
+  early_stopping_patience: 5
   early_stopping_threshold: 0.0

@@ -67,6 +67,25 @@ class SFTTrainingConfig:
     per_device_train_batch_size: int = 2
     gradient_accumulation_steps: int = 4
     learning_rate: float = 2e-4
+    # LR schedule shape. HF's default, "linear", decays straight from the peak to 0, so a long
+    # run spends most of its steps at an LR high enough to bounce v around and only settles once
+    # the tail brings the LR near zero. "cosine" holds a moderate LR through the middle instead.
+    lr_scheduler_type: str = "linear"
+    # Optimizer steps spent ramping the LR up from 0. HF defaults to 0, which puts the very first
+    # step at the full peak LR -- with AdamW that step moves every scalar in v by ~learning_rate,
+    # a large fraction of its +/-init_v_bound init range. Counted in steps rather than as a
+    # fraction because transformers 5.x dropped `warmup_ratio`; size it against max_steps by hand.
+    warmup_steps: int = 0
+    # Gradients are rescaled when their global norm exceeds this (HF default 1.0). TinyLoRA's
+    # per-step grad norms swing several-fold from batch to batch, so this is what stops an
+    # outlier batch from landing an outsized update.
+    max_grad_norm: float = 1.0
+    # L2 pull toward zero. Left off by default: v starts near zero already, so decay here fights
+    # the only thing training is trying to move.
+    weight_decay: float = 0.0
+    # AdamW's second-moment decay. Higher averages the gradient-magnitude estimate over a longer
+    # window, which steadies the update size when per-batch gradients are noisy.
+    adam_beta2: float = 0.999
     max_seq_length: int = 1024
     logging_steps: int = 10
     save_steps: int = 200
