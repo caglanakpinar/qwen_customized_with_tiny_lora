@@ -118,7 +118,47 @@ def ensure_gdrive_dataset(cache_dir: Path, zip_file_id: str | None) -> Path:
     with zipfile.ZipFile(zip_path) as archive:
         archive.extractall(cache_dir)
     zip_path.unlink()
+    _flatten_dataset_dir(cache_dir)
     return cache_dir
+
+
+# Every shape `data/synthetic/build.py` can write -- if a zip nests any of these one or more
+# directories deep, `_flatten_dataset_dir` pulls it back up to `cache_dir`.
+_DATASET_FILE_PATTERNS = (
+    "sft_train-*.jsonl",
+    "sft_eval.jsonl",
+    "grpo_train-*.jsonl",
+    "grpo_eval.jsonl",
+)
+
+
+def _flatten_dataset_dir(cache_dir: Path) -> None:
+    """Pull the dataset files up to `cache_dir`'s top level, however deep the zip nested them.
+
+    `dataset_name`/`eval_dataset_name` point at `sft_train-*.jsonl` directly under `cache_dir` --
+    the layout `data/synthetic/build.py --zip` produces. Not every zip is laid out that way: a
+    folder zipped through Drive's own "Download" wraps its contents in a top-level directory
+    named after the folder, so extracting lands the shards one level deeper and the training
+    glob matches nothing. Flattening here means any zip layout works, not just the flat one.
+    """
+    moved = False
+    for pattern in _DATASET_FILE_PATTERNS:
+        for path in cache_dir.glob(f"**/{pattern}"):
+            if path.parent != cache_dir:
+                target = cache_dir / path.name
+                if not target.exists():
+                    path.rename(target)
+                    moved = True
+    if not moved:
+        return
+    # Directories the flatten emptied out are walked deepest-first, so a chain of nested
+    # wrapper folders (not just one) is fully cleared rather than leaving the outer ones behind.
+    for directory in sorted(cache_dir.glob("**/*"), key=lambda p: len(p.parts), reverse=True):
+        if directory.is_dir():
+            try:
+                directory.rmdir()
+            except OSError:
+                pass
 
 
 def _ensure_gdrive_dataset(data_cfg: DataConfig) -> None:
