@@ -51,6 +51,32 @@ if [ "${SKIP_TRAIN:-}" = "1" ]; then
   exit 0
 fi
 
+# `data/` is gitignored, so a fresh clone never has it. `tiny-lora sft` would fetch it itself on
+# a "gdrive" config -- load_raw_dataset calls the same ensure_gdrive_dataset() below -- but doing
+# it here first means a bad zip_file_id or a missing dataset fails in seconds, before the model
+# and tokenizer have loaded, rather than minutes into the training step.
+echo "==> Preparing dataset for $CONFIG"
+poetry run python -c "
+import sys
+from tiny_lora.config import DataConfig, _flatten_data_config, _merge_dataclass, load_yaml_config
+from tiny_lora.data import ensure_gdrive_dataset
+
+raw = load_yaml_config('$CONFIG')
+data_cfg = _merge_dataclass(DataConfig(), _flatten_data_config(raw.get('data', {})))
+if data_cfg.reader != 'gdrive':
+    print(f'    reader is {data_cfg.reader!r}; nothing to fetch')
+    sys.exit(0)
+
+cache_dir = ensure_gdrive_dataset(data_cfg.gdrive_cache_dir, data_cfg.gdrive_zip_file_id)
+shards = sorted(cache_dir.glob('sft_train-*.jsonl'))
+if not shards:
+    sys.exit(
+        f'no sft_train-*.jsonl in {cache_dir} after extraction -- check data.gdrive.zip_file_id '
+        f'in $CONFIG points at a dataset zip, not something else'
+    )
+print(f'    {len(shards)} shard(s) ready in {cache_dir}')
+"
+
 # --no-quant skips bitsandbytes 4-bit loading, which is Linux/CUDA only.
 echo "==> Starting SFT run with $CONFIG"
 poetry run tiny-lora sft --config "$CONFIG" --no-quant
