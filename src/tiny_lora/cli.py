@@ -212,7 +212,7 @@ def chat_cmd(
 )
 @click.option("--model", "base_model", default=None, help="Override base model (default: read from the adapter).")
 @click.option("--no-quant", is_flag=True, help="Disable 4-bit quantization (use bf16).")
-@click.option("--max-new-tokens", type=int, default=512, show_default=True, help="Max tokens generated per reply.")
+@click.option("--max-new-tokens", type=int, default=1024, show_default=True, help="Max tokens generated per reply.")
 @click.option("--temperature", type=float, default=0.7, show_default=True, help="Sampling temperature; 0 for greedy.")
 @click.option("--system", "system_prompt", default=None, help="Optional system prompt to prepend.")
 @click.option("--trust-remote-code", is_flag=True, help="Trust remote code for the base model.")
@@ -220,7 +220,7 @@ def chat_cmd(
     "--summarize-after",
     "summarize_after_turns",
     type=int,
-    default=6,
+    default=20,
     show_default=True,
     help="Fold older turns into a running key-points summary once history exceeds this many turns.",
 )
@@ -228,7 +228,7 @@ def chat_cmd(
     "--keep-recent",
     "keep_recent_turns",
     type=int,
-    default=2,
+    default=8,
     show_default=True,
     help="Number of most recent turns to keep verbatim when summarizing.",
 )
@@ -411,14 +411,28 @@ def chat_api_cmd(
     default=None,
     help="Cap the eval split to this many rows (overrides data.max_eval_samples).",
 )
-def eval_cmd(config_path: Path, adapter_path: Path, max_eval_samples: int | None) -> None:
+@click.option(
+    "--evals-dir",
+    "evals_dir",
+    type=click.Path(file_okay=False, path_type=Path),
+    default=None,
+    help="Where to write the JSON results [default: an evals/ folder inside --adapter].",
+)
+@click.option("--no-save", is_flag=True, help="Print the results without writing them to disk.")
+def eval_cmd(
+    config_path: Path,
+    adapter_path: Path,
+    max_eval_samples: int | None,
+    evals_dir: Path | None,
+    no_save: bool,
+) -> None:
     """Compare base-model vs checkpoint eval loss/perplexity on the configured eval split."""
     from tiny_lora.eval import run_eval
 
     overrides: dict = {}
     if max_eval_samples is not None:
         overrides.setdefault("data", {})["max_eval_samples"] = max_eval_samples
-    run_eval(config_path, adapter_path, overrides)
+    run_eval(config_path, adapter_path, overrides, evals_dir=evals_dir, save=not no_save)
 
 
 @cli.command("info")

@@ -101,6 +101,25 @@ poetry run tiny-lora chat-api --adapter "$ADAPTER" --no-quant
 | `info` | Print config and trainable parameter count |
 | `show-config` | Display a YAML config as JSON |
 
+`eval` writes its results to `<adapter>/evals/eval-<timestamp>.json` alongside printing them --
+one record per run, so re-evaluating a checkpoint against a different split or sample cap builds up
+a history rather than overwriting the previous number. Each record carries the config, eval split,
+row count and the base-vs-checkpoint delta. Use `--evals-dir` to write elsewhere, or `--no-save` to
+only print:
+
+```bash
+poetry run tiny-lora eval \
+  --config configs/sft_ds_assistant.yaml \
+  --adapter outputs/sft-ds-assistant/checkpoint-5000 \
+  --max-eval-samples 1000
+# Results on the held-out eval split (lower is better):
+#                eval_loss    perplexity
+# base              2.5833       13.2408
+# checkpoint        1.8204        6.1745
+#
+# Saved to outputs/sft-ds-assistant/checkpoint-5000/evals/eval-20260822T164500Z.json
+```
+
 > **Note:** `--adapter` takes any saved adapter or checkpoint dir, e.g. `outputs/sft-ds-assistant/adapter`
 > (written once SFT finishes) or an intermediate `outputs/sft-ds-assistant/checkpoint-500` (written
 > every `training.save_steps`, so one exists as soon as the first checkpoint is saved — no need to
@@ -139,6 +158,12 @@ model is loaded once at startup and shared across browser tabs, each tab getting
 |------|---------|-------------|
 | `--host` | `127.0.0.1` | Host interface to bind the web server to. |
 | `--port` | `8000` | Port to serve the chat UI on. |
+
+Three shared flags default higher here than in `chat`, so a browser conversation keeps much more of
+itself verbatim before anything is folded away: `--max-new-tokens` is `1024`, `--summarize-after` is
+`20` turns, and `--keep-recent` is `8` turns. Qwen2.5-0.5B-Instruct's own context window is 32k
+tokens, so those still leave headroom; raise them further (or lower them, if generation gets slow) on
+the command line.
 
 The frontend lives under [`web/`](web/) — `web/app.py` is a small FastAPI app (`GET /`, `POST
 /api/chat`, `POST /api/reset`) and `web/static/` is a vanilla HTML/CSS/JS chat interface with no
@@ -185,6 +210,7 @@ llm_with_tiny_lora/
 ├── web/                     # Browser chat UI, served by `tiny-lora serve`
 │   ├── app.py                  # FastAPI backend (/, /api/chat, /api/reset)
 │   └── static/                  # HTML/CSS/JS chat frontend, no build step
+├── mobile/                  # Android client for the same /api/chat routes (see mobile/README.md)
 └── src/tiny_lora/
     ├── cli.py              # Click CLI entry point
     ├── config.py           # Config dataclasses & YAML loader

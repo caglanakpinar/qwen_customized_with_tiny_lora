@@ -83,21 +83,23 @@ def _load_until(data_files: list[str], max_samples: int) -> Dataset:
     return loaded.select(range(max_samples))
 
 
-def _ensure_gdrive_dataset(data_cfg: DataConfig) -> None:
-    """Download and extract the dataset zip from Google Drive into `gdrive_cache_dir`.
+def ensure_gdrive_dataset(cache_dir: Path, zip_file_id: str | None) -> Path:
+    """Download and extract the dataset zip from Google Drive into `cache_dir`.
 
     Skipped once the cache dir is populated, so this only pays the download cost once --
     later runs (and the eval split, loaded through the same call) read the extracted files
-    exactly like a local dataset.
+    exactly like a local dataset. Returns the cache dir either way.
+
+    `data/synthetic/build.py` calls this too, so a build configured to append starts from the
+    same bytes the trainer would have read. Keeping one implementation matters because the
+    "already populated, leave it alone" rule is the thing both sides have to agree on: if the
+    builder re-downloaded over a dataset it was about to append to, the append would be lost.
     """
-    if data_cfg.reader != "gdrive":
-        return
-
-    cache_dir = Path(data_cfg.gdrive_cache_dir)
+    cache_dir = Path(cache_dir)
     if cache_dir.is_dir() and any(cache_dir.iterdir()):
-        return
+        return cache_dir
 
-    if not data_cfg.gdrive_zip_file_id:
+    if not zip_file_id:
         raise ValueError(
             "data.gdrive.zip_file_id must be set when data.reader is 'gdrive'."
         )
@@ -112,10 +114,18 @@ def _ensure_gdrive_dataset(data_cfg: DataConfig) -> None:
 
     cache_dir.mkdir(parents=True, exist_ok=True)
     zip_path = cache_dir / "_gdrive_dataset.zip"
-    gdown.download(id=data_cfg.gdrive_zip_file_id, output=str(zip_path), quiet=False)
+    gdown.download(id=zip_file_id, output=str(zip_path), quiet=False)
     with zipfile.ZipFile(zip_path) as archive:
         archive.extractall(cache_dir)
     zip_path.unlink()
+    return cache_dir
+
+
+def _ensure_gdrive_dataset(data_cfg: DataConfig) -> None:
+    """`ensure_gdrive_dataset` driven by a `DataConfig`, and a no-op for any other reader."""
+    if data_cfg.reader != "gdrive":
+        return
+    ensure_gdrive_dataset(Path(data_cfg.gdrive_cache_dir), data_cfg.gdrive_zip_file_id)
 
 
 def load_raw_dataset(data_cfg: DataConfig, dataset_name: str | None = None) -> Dataset:
