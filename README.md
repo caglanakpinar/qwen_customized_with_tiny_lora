@@ -148,6 +148,33 @@ Every 5th time the chat folds turns into a summary, that summary is embedded wit
 own hidden states and appended to a FAISS index (`<memory-dir>/faiss_index/`) and a Chroma collection
 (`<memory-dir>/chroma_db/`), so long conversations leave a searchable trail of what was discussed.
 
+#### Identity guardrail
+
+Asked who it is, the base Qwen2.5 answers "a large language model developed by Alibaba Cloud" — true
+of the base model, wrong for this assistant. Two layers handle that, in [`chat.py`](src/tiny_lora/chat.py).
+
+**Identity questions are answered, not generated.** "Who are you", "describe yourself", "who made
+you", "what model are you", "are you ChatGPT" and similar are matched by `_IDENTITY_QUESTION_RE` and
+answered with `IDENTITY_REPLY` verbatim, with no forward pass at all. Prompting the model with the
+persona instead was tried and abandoned: it stopped the Alibaba leak but had the 0.5B base
+confabulating replacements — *"I'm a data scientist trained at Oxford University"*, *"I'm an AI
+assistant here at Google"* — neither containing a banned word, both false. A model this size does not
+follow a persona instruction reliably enough to be the last word on what it is, and the question has
+exactly one correct answer, so sampling one buys nothing. Edit `IDENTITY_REPLY` to change the
+persona, or pass `identity_reply=None` to a `ChatSession` to generate these answers instead.
+
+**Every other reply is filtered.** Output is checked against `BANNED_TERMS` (`qwen`, `alibaba`, `anthropic`, `claude`, `openai`, `chatgpt`
+and variants, matched case-insensitively on word boundaries). On a hit the model is asked to rewrite,
+told which words it used; after `GUARDRAIL_RETRIES` (2) failed rewrites the offending *sentences* are
+deleted, and if that empties the reply `GUARDRAIL_FALLBACK` is sent instead. A clean reply — the
+common case — costs one generation, so the guardrail is free unless it actually fires.
+
+The word list deliberately omits `google`, `meta`, `gemini` and `llama`: they are ordinary vocabulary for
+a data-science assistant (Google Colab, meta-learning), and banning them would delete good answers.
+Edit `BANNED_TERMS` if that trade-off runs the other way for you. The guardrail covers assistant
+replies in every entry point (`chat`, `serve`, `chat-api`, all of which go through `ChatSession.send`);
+it does not filter the running conversation summaries, which paraphrase what the *user* said too.
+
 ### `serve`: browser chat UI
 
 `serve` takes every `chat` argument above (same model/summary/memory/knowledge-base options — one
