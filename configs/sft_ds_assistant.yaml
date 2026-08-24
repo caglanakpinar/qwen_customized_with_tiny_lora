@@ -52,17 +52,17 @@ data:
   gdrive:
     # File id (or full share URL) of the dataset zip on Google Drive. Share the file as
     # "anyone with the link", then paste its id here. Only used when reader: "gdrive".
-    zip_file_id: 10yVRHMMbWivs-rswQXvFU6MTg6x502Q-
+    zip_file_id: 1WL8fj4UtjymLKBtIuoHqZylIZlmm2U3P
     # Where the zip is extracted to. Downloaded once and reused on later runs if this
     # directory is already populated -- matches dataset_name/eval_dataset_name above.
     cache_dir: "data/synthetic/dataset"
 
 training:
   output_dir: "outputs/sft-ds-assistant"   # where checkpoints and the final adapter are written
-  num_train_epochs: 1          # with 50k samples one pass is already plenty of steps
+  num_train_epochs: 1         # with 10k samples one pass is already plenty of steps
   # max_steps overrides num_train_epochs. At batch 8 x grad_accum 4 the effective batch is 32, so
   # max_samples: 50000 is ~1562 steps per pass, and 15000 steps is ~9.6 passes over the subset.
-  max_steps: 15000              # cap the run at 15000 optimizer steps
+  max_steps: 5000              # cap the run at 15000 optimizer steps
   per_device_train_batch_size: 8   # sequences per forward/backward pass, per device
   # The loss upcasts the logits (batch x seq_len x vocab) to fp32, and at vocab 151936 and
   # max_seq_length 1536 that is ~0.9 GB per sequence in fp32 on top of the bf16 copy -- so eval at
