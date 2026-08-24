@@ -52,7 +52,7 @@ data:
   gdrive:
     # File id (or full share URL) of the dataset zip on Google Drive. Share the file as
     # "anyone with the link", then paste its id here. Only used when reader: "gdrive".
-    zip_file_id: 1WL8fj4UtjymLKBtIuoHqZylIZlmm2U3P
+    zip_file_id: 1YiuilFwQ15giQhVkeGJMhcR_t0QH5x7_
     # Where the zip is extracted to. Downloaded once and reused on later runs if this
     # directory is already populated -- matches dataset_name/eval_dataset_name above.
     cache_dir: "data/synthetic/dataset"
