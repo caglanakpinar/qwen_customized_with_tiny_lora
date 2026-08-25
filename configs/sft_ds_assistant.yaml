@@ -11,6 +11,7 @@ model:
   load_in_4bit: false          # full bf16; `--no-quant` forces this off regardless
   torch_dtype: "auto"          # let transformers pick the dtype the checkpoint was saved in
   trust_remote_code: false     # Qwen2.5 ships standard modeling code; no custom code needed
+  attn_implementation: null    # let transformers pick (e.g. sdpa); set "flash_attention_2" where supported
 
 tinylora:
   r: 2                         # SVD rank of the fixed random projection matrices (paper default)
@@ -31,6 +32,8 @@ tinylora:
   projection_seed: 42          # RNG seed for the fixed projection matrices; fixes reproducibility
   init_weights: "uniform"      # how v is initialised before training starts
   init_v_bound: 0.02           # +/- range for the uniform init of v
+  save_projection: true        # bundle the fixed random projection matrices into the saved adapter
+  tinylora_dropout: 0.0        # dropout on v during training; 0 disables it
 
 data:
   # "local" reads dataset_name/eval_dataset_name straight off disk. "gdrive" first downloads
