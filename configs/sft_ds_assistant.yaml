@@ -35,6 +35,24 @@ tinylora:
   save_projection: true        # bundle the fixed random projection matrices into the saved adapter
   tinylora_dropout: 0.0        # dropout on v during training; 0 disables it
 
+# Used instead of `tinylora:` above when training via `tiny-lora sft-lora` -- standard LoRA (trained
+# A/B low-rank matrices, not TinyLoRA's fixed random projection + single trainable vector). Same
+# model/data/training sections apply either way.
+standard_lora:
+  r: 256                         # LoRA rank -- width of the trainable A/B low-rank update
+  lora_alpha: 16                # update is scaled by lora_alpha / r (or / sqrt(r) with use_rslora)
+  target_modules:                # which attention/MLP projections get a LoRA adapter
+    - q_proj
+    - v_proj
+    - o_proj
+    - k_proj
+    - gate_proj
+    - up_proj
+    - down_proj
+  lora_dropout: 0.05            # dropout on the LoRA path; standard LoRA runs typically use a small amount
+  bias: "none"                  # "none", "all", or "lora_only" -- which biases also train
+  use_rslora: false             # rank-stabilized scaling (alpha / sqrt(r)); off matches the original LoRA paper
+
 data:
   # "local" reads dataset_name/eval_dataset_name straight off disk. "gdrive" first downloads
   # a zip from Google Drive into gdrive.cache_dir and extracts it there, then reads the same
