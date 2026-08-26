@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "TinyLoRA training pipeline for LLMs"
 authors = ["caglanakpinar"]
 readme = "README.md"
-packages = [{ include = "tiny_lora", from = "src" }]
+packages = [{ include = "tiny_lora", from = "src" }, { include = "standard_lora", from = "src" }]
 
 [tool.poetry.dependencies]
 python = "^3.10"
