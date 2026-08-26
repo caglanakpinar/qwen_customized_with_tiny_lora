@@ -18,7 +18,13 @@ from transformers.utils import (
 )
 from trl import SFTConfig, SFTTrainer
 
-from tiny_lora.config import PipelineConfig, SFTTrainingConfig, build_pipeline_config, config_to_dict, load_yaml_config
+from tiny_lora.config import (
+    DataConfig,
+    PipelineConfig,
+    SFTTrainingConfig,
+    build_pipeline_config,
+    load_yaml_config,
+)
 from tiny_lora.data import prepare_sft_dataset, prepare_sft_eval_dataset
 from tiny_lora.model import load_tinylora_model, load_tokenizer
 
@@ -70,14 +76,19 @@ def resolve_resume_checkpoint(output_dir: Path) -> str | None:
     return None
 
 
-def run_sft(config: PipelineConfig) -> str:
-    train_cfg: SFTTrainingConfig = config.training  # type: ignore[assignment]
+def run_sft_core(model, tokenizer, data_cfg: DataConfig, train_cfg: SFTTrainingConfig) -> str:
+    """Adapter-agnostic SFT loop: build the dataset, Trainer, and run training.
 
+    `model` must already have its adapter attached (TinyLoRA, standard LoRA, ...) -- this
+    function only knows about the generic PEFT-model/Trainer plumbing, not any particular
+    adapter type. `run_sft` below is the TinyLoRA entry point; `standard_lora.train_sft` calls
+    this directly with a LoRA-wrapped model instead.
+    """
     # Mirrors the `eval_dataset is not None` check below: `prepare_sft_eval_dataset` returns
     # None exactly when `eval_dataset_name` is unset. Checked here, before any model/data
     # loading, so a bad save_steps/eval_steps pairing fails immediately instead of after
     # several minutes of downloading and loading the base model.
-    if train_cfg.early_stopping and config.data.eval_dataset_name:
+    if train_cfg.early_stopping and data_cfg.eval_dataset_name:
         if train_cfg.save_steps % train_cfg.eval_steps != 0:
             raise ValueError(
                 "training.early_stopping requires save_steps to be a round multiple of "
@@ -85,13 +96,8 @@ def run_sft(config: PipelineConfig) -> str:
                 f"eval_steps={train_cfg.eval_steps}."
             )
 
-    tokenizer = load_tokenizer(
-        config.model.model_name_or_path,
-        trust_remote_code=config.model.trust_remote_code,
-    )
-    model = load_tinylora_model(config.model, config.tinylora)
-    dataset = prepare_sft_dataset(config.data, tokenizer)
-    eval_dataset = prepare_sft_eval_dataset(config.data, tokenizer)
+    dataset = prepare_sft_dataset(data_cfg, tokenizer)
+    eval_dataset = prepare_sft_eval_dataset(data_cfg, tokenizer)
 
     model.print_trainable_parameters()
 
@@ -164,6 +170,16 @@ def run_sft(config: PipelineConfig) -> str:
     trainer.save_model(str(output_dir / "adapter"))
     tokenizer.save_pretrained(str(output_dir / "adapter"))
     return str(output_dir / "adapter")
+
+
+def run_sft(config: PipelineConfig) -> str:
+    """TinyLoRA SFT entry point: attach a TinyLoRA adapter, then run the shared SFT loop."""
+    tokenizer = load_tokenizer(
+        config.model.model_name_or_path,
+        trust_remote_code=config.model.trust_remote_code,
+    )
+    model = load_tinylora_model(config.model, config.tinylora)
+    return run_sft_core(model, tokenizer, config.data, config.training)
 
 
 def run_sft_from_yaml(config_path: str | Path, overrides: dict | None = None) -> str:

@@ -89,6 +89,51 @@ def sft_cmd(
     click.echo(f"SFT complete. Adapter saved to: {adapter_path}")
 
 
+@cli.command("sft-lora")
+@click.option(
+    "--config",
+    "config_path",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=DEFAULT_SFT_CONFIG,
+    show_default=True,
+    help="YAML config file (reads its standard_lora: section).",
+)
+@click.option("--model", default=None, help="Override base model name or path.")
+@click.option("--r", type=int, default=None, help="LoRA rank.")
+@click.option("--lora-alpha", type=int, default=None, help="LoRA alpha (scaling numerator).")
+@click.option("--max-samples", type=int, default=None, help="Limit training samples.")
+@click.option("--output-dir", default=None, help="Override output directory.")
+@click.option("--no-quant", is_flag=True, help="Disable 4-bit quantization (use bf16).")
+def sft_lora_cmd(
+    config_path: Path,
+    model: str | None,
+    r: int | None,
+    lora_alpha: int | None,
+    max_samples: int | None,
+    output_dir: str | None,
+    no_quant: bool,
+) -> None:
+    """Run supervised fine-tuning with standard LoRA."""
+    from standard_lora.train_sft import run_sft_from_yaml as run_standard_lora_sft_from_yaml
+
+    overrides: dict = {}
+    if model:
+        overrides.setdefault("model", {})["model_name_or_path"] = model
+    if no_quant:
+        overrides.setdefault("model", {})["load_in_4bit"] = False
+    if r is not None:
+        overrides.setdefault("standard_lora", {})["r"] = r
+    if lora_alpha is not None:
+        overrides.setdefault("standard_lora", {})["lora_alpha"] = lora_alpha
+    if max_samples is not None:
+        overrides.setdefault("data", {})["max_samples"] = max_samples
+    if output_dir:
+        overrides.setdefault("training", {})["output_dir"] = output_dir
+
+    adapter_path = run_standard_lora_sft_from_yaml(config_path, overrides)
+    click.echo(f"SFT complete. Adapter saved to: {adapter_path}")
+
+
 @cli.command("grpo")
 @click.option(
     "--config",

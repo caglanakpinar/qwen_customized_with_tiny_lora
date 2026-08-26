@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +28,104 @@ _SUMMARY_INSTRUCTION = (
     "Summarize the key points of the conversation so far as short bullet points. "
     "Keep facts, decisions, and user preferences that later replies will need. Omit small talk."
 )
+
+# Vendor and model-family names the assistant must not put in a reply. The base model underneath
+# the adapter is Qwen2.5, and left to itself it introduces itself as "Qwen, created by Alibaba
+# Cloud" the moment it is asked who it is -- which is both wrong for this assistant and leaks
+# where it came from. Deliberately NOT in this list: "google", "meta", "gemini" and friends are
+# ordinary vocabulary for a data-science assistant (Google Colab, meta-learning), so banning them
+# would delete useful answers. Add them here if that trade-off goes the other way for you.
+BANNED_TERMS = (
+    "qwen",
+    "qwen2",
+    "qwen2.5",
+    "tongyi",
+    "qianwen",
+    "alibaba",
+    "alibaba cloud",
+    "anthropic",
+    "claude",
+    "openai",
+    "chatgpt",
+)
+
+# How many times to re-ask for a clean reply before falling back to deleting sentences. Each retry
+# is a full generation, so this is a latency budget as much as a safety one.
+GUARDRAIL_RETRIES = 2
+
+# Sent when every retry still leaked and sentence-stripping removed the entire reply.
+GUARDRAIL_FALLBACK = "I can't answer that one. Ask me something else and I'll help."
+
+# The assistant's answer to "what are you" -- returned verbatim, not generated. An identity question
+# has exactly one correct answer, so there is nothing to gain by sampling one, and a great deal to
+# lose: injecting this same text as a system instruction and letting the 0.5B base model paraphrase
+# it produced "I'm a data scientist trained at Oxford University" and "I'm an AI assistant here at
+# Google" -- no banned term in either, both false. A model this size does not follow a persona
+# instruction reliably enough to be the last word on what it is. Edit this one string to change the
+# persona; pass identity_reply=None to a ChatSession to generate the answer instead.
+IDENTITY_REPLY = (
+    "I'm a data-science assistant. I can help with analysis, statistics, machine learning, and the "
+    "Python data stack -- pandas, NumPy, scikit-learn and the rest. What are you working on?"
+)
+
+# Questions that get the model talking about itself, which is exactly when the base model
+# volunteers "I am Qwen, developed by Alibaba Cloud". Matched loosely on purpose: a false positive
+# only prepends a short identity note to a turn that was already about the assistant, while a false
+# negative sends the leak-prone question through with no guidance at all.
+_IDENTITY_QUESTION_RE = re.compile(
+    r"""(
+          who\s+(are|r)\s+(you|u)
+        | what\s+(are|r)\s+(you|u)\s*[?!.,]|what\s+(are|r)\s+(you|u)$
+        | what\s+(kind\s+of\s+)?(model|llm|ai|bot|assistant|system)\s+(are|r)\s+(you|u)
+        | which\s+(model|llm|ai|company|lab)\b
+        | describe\s+your\s*self
+        | tell\s+me\s+about\s+your\s*self
+        | introduce\s+your\s*self
+        | who\s+(made|created|built|trained|developed|owns)\s+(you|u)
+        | what\s*('?s|\s+is)\s+your\s+name
+        | are\s+(you|u)\s+(a\s+|an\s+)?(human|person|robot|ai|bot|llm|gpt|chatgpt|qwen|claude|llama)
+        | where\s+(do|did)\s+(you|u)\s+come\s+from
+        | what\s+can\s+(you|u)\s+do
+    )""",
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
+def _is_identity_question(text: str) -> bool:
+    """True when `text` asks the assistant what or who it is."""
+    return _IDENTITY_QUESTION_RE.search(text) is not None
+
+
+_BANNED_TERM_RE = re.compile(r"\b(?:" + "|".join(re.escape(t) for t in BANNED_TERMS) + r")\b", re.IGNORECASE)
+
+# A sentence is everything up to a terminator, a newline, or the end of the text. Matching rather
+# than splitting keeps each terminator attached to its sentence, so dropping one sentence from a
+# reply leaves the rest spaced and punctuated as the model wrote it.
+_SENTENCE_RE = re.compile(r"[^.!?\n]*(?:[.!?]+|\n+|$)")
+
+
+def _banned_terms_in(text: str) -> list[str]:
+    """Return the distinct banned terms `text` uses, in the order they first appear."""
+    seen: dict[str, None] = {}
+    for match in _BANNED_TERM_RE.finditer(text):
+        seen.setdefault(match.group(0).lower(), None)
+    return list(seen)
+
+
+def _strip_banned_sentences(text: str) -> str:
+    """Drop whole sentences containing a banned term, keeping the rest of `text` intact."""
+    kept = [m.group(0) for m in _SENTENCE_RE.finditer(text) if m.group(0) and not _BANNED_TERM_RE.search(m.group(0))]
+    return "".join(kept).strip()
+
+
+def _guardrail_instruction(found: list[str]) -> str:
+    return (
+        "Your previous answer used these forbidden words: "
+        + ", ".join(found)
+        + ". Rewrite it without them. Never name the model, company, or research lab behind you, "
+        "and do not substitute a different one. If you are asked what you are, say only that you "
+        "are a data-science assistant."
+    )
 
 
 def _to_chat_template_messages(messages: list) -> list[dict[str, str]]:
@@ -57,6 +156,34 @@ def _generate(model, tokenizer, messages: list, max_new_tokens: int, temperature
         )
     reply_ids = output_ids[0, inputs["input_ids"].shape[1] :]
     return tokenizer.decode(reply_ids, skip_special_tokens=True).strip()
+
+
+def _generate_guarded(
+    model,
+    tokenizer,
+    messages: list,
+    max_new_tokens: int,
+    temperature: float,
+    retries: int = GUARDRAIL_RETRIES,
+) -> str:
+    """Generate a reply that names no vendor or model family.
+
+    Regenerates up to `retries` times, each time telling the model which words it just used and
+    to rewrite without them -- a retry is preferred over editing because a reply that has had its
+    identity sentence cut out often no longer answers the question. Only if the last attempt still
+    leaks are the offending sentences dropped outright.
+    """
+    reply = _generate(model, tokenizer, messages, max_new_tokens, temperature)
+    for _ in range(retries):
+        found = _banned_terms_in(reply)
+        if not found:
+            return reply
+        retry_messages = [*messages, SystemMessage(content=_guardrail_instruction(found))]
+        reply = _generate(model, tokenizer, retry_messages, max_new_tokens, temperature)
+
+    if not _banned_terms_in(reply):
+        return reply
+    return _strip_banned_sentences(reply) or GUARDRAIL_FALLBACK
 
 
 def _summarize_key_points(model, tokenizer, running_summary: str | None, messages_to_fold: list) -> str:
@@ -150,6 +277,7 @@ class ChatSession:
         keep_recent_turns: int = 2,
         memory_dir: Path = Path("outputs/chat_memory"),
         knowledge_store: KnowledgeStore | None = None,
+        identity_reply: str | None = IDENTITY_REPLY,
     ) -> None:
         self.model = model
         self.tokenizer = tokenizer
@@ -161,6 +289,7 @@ class ChatSession:
         self.keep_recent_turns = keep_recent_turns
         self.memory_dir = memory_dir
         self.knowledge_store = knowledge_store
+        self.identity_reply = identity_reply
 
         self.history = InMemoryChatMessageHistory()
         if system_prompt:
@@ -172,13 +301,23 @@ class ChatSession:
         """Add `text` as a user turn and return the generated reply."""
         self.history.add_message(HumanMessage(content=text))
 
-        generation_messages = self.history.messages
-        if self.knowledge_store is not None:
-            context_message = _retrieved_context_message(self.knowledge_store, text)
-            if context_message is not None:
-                generation_messages = [*self.history.messages[:-1], context_message, self.history.messages[-1]]
+        if self.identity_reply is not None and _is_identity_question(text):
+            # Answered without generating at all -- see IDENTITY_REPLY for why. The answer still
+            # joins `history`, so a follow-up ("what else can you do?") reads as a normal turn.
+            reply = self.identity_reply
+        else:
+            # A system message that applies to this turn only, slotted in just before the user's
+            # message so it is the last thing the model reads. Never added to `history`: it is
+            # about this question, and carrying it forward would skew every later turn.
+            generation_messages = self.history.messages
+            if self.knowledge_store is not None:
+                context_message = _retrieved_context_message(self.knowledge_store, text)
+                if context_message is not None:
+                    generation_messages = [*self.history.messages[:-1], context_message, self.history.messages[-1]]
 
-        reply = _generate(self.model, self.tokenizer, generation_messages, self.max_new_tokens, self.temperature)
+            reply = _generate_guarded(
+                self.model, self.tokenizer, generation_messages, self.max_new_tokens, self.temperature
+            )
         self.history.add_message(AIMessage(content=reply))
 
         self.running_summary, folded = _compact_history(
