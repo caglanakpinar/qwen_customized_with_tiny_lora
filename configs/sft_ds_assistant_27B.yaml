@@ -1,0 +1,141 @@
+# Supervised fine-tuning on the synthetic data-science assistant dataset.
+#
+# Build the dataset first:
+#     python -m data.synthetic.build
+#
+# Then:
+#     poetry run tiny-lora sft --config configs/sft_ds_assistant.yaml --no-quant
+
+model:
+  model_name_or_path: "Qwen/Qwen/Qwen3.8-27B"  # base model pulled from the Hugging Face Hub
+  load_in_4bit: false          # full bf16; `--no-quant` forces this off regardless
+  torch_dtype: "auto"          # let transformers pick the dtype the checkpoint was saved in
+  trust_remote_code: false     # Qwen2.5 ships standard modeling code; no custom code needed
+  attn_implementation: null    # let transformers pick (e.g. sdpa); set "flash_attention_2" where supported
+
+tinylora:
+  r: 2                         # SVD rank of the fixed random projection matrices (paper default)
+  # Size of the trainable vector v -- this is nearly all of what trains, and the ceiling on what
+  # the adapter can express. Raised 4x from 32: at u=32 the run trained 5,376 scalars (32 x 7
+  # modules x 24 layers) and both train and eval loss stalled together around 1.85-1.87 with no
+  # gap between them, which is underfitting, not overfitting. u=128 trains 21,504.
+  u: 128
+  weight_tying: 0.0            # per-module v vectors; 1.0 shares one v everywhere
+  target_modules:               # which attention projections get a TinyLoRA adapter
+    - q_proj
+    - v_proj
+    - o_proj
+    - k_proj
+    - gate_proj
+    - up_proj
+    - down_proj
+  projection_seed: 42          # RNG seed for the fixed projection matrices; fixes reproducibility
+  init_weights: "uniform"      # how v is initialised before training starts
+  init_v_bound: 0.02           # +/- range for the uniform init of v
+  save_projection: true        # bundle the fixed random projection matrices into the saved adapter
+  tinylora_dropout: 0.0        # dropout on v during training; 0 disables it
+
+# Used instead of `tinylora:` above when training via `tiny-lora sft-lora` -- standard LoRA (trained
+# A/B low-rank matrices, not TinyLoRA's fixed random projection + single trainable vector). Same
+# model/data/training sections apply either way.
+standard_lora:
+  r: 256                         # LoRA rank -- width of the trainable A/B low-rank update
+  lora_alpha: 16                # update is scaled by lora_alpha / r (or / sqrt(r) with use_rslora)
+  target_modules:                # which attention/MLP projections get a LoRA adapter
+    - q_proj
+    - v_proj
+    - o_proj
+    - k_proj
+    - gate_proj
+    - up_proj
+    - down_proj
+  lora_dropout: 0.05            # dropout on the LoRA path; standard LoRA runs typically use a small amount
+  bias: "none"                  # "none", "all", or "lora_only" -- which biases also train
+  use_rslora: false             # rank-stabilized scaling (alpha / sqrt(r)); off matches the original LoRA paper
+
+data:
+  # "local" reads dataset_name/eval_dataset_name straight off disk. "gdrive" first downloads
+  # a zip from Google Drive into gdrive.cache_dir and extracts it there, then reads the same
+  # dataset_name/eval_dataset_name paths -- so once it's downloaded, both readers behave
+  # identically. Requires the `gdrive` extra: `poetry install -E gdrive`.
+  reader: "gdrive"                 # "local" or "gdrive"
+  # A shard glob -- the 5 GB set is written across many files. Resolved relative to the
+  # working directory, so run from the repo root.
+  dataset_name: "data/synthetic/dataset/sft_train-*.jsonl"   # training shards
+  eval_dataset_name: "data/synthetic/dataset/sft_eval.jsonl" # held-out split, enables eval loss
+  # The full set is ~2M records. Start with a subset: TinyLoRA trains a few hundred scalars,
+  # so it saturates long before it has seen everything.
+  max_samples: 50000            # cap on training rows read from the glob
+  # Cap the held-out split too: eval runs every eval_steps and scores the whole split each time.
+  # 500 rows is enough for an eval_loss stable enough to early-stop on, and on an A100 it costs
+  # seconds. Drop it back to a few dozen only when running somewhere much smaller.
+  max_eval_samples: 500
+  gdrive:
+    # File id (or full share URL) of the dataset zip on Google Drive. Share the file as
+    # "anyone with the link", then paste its id here. Only used when reader: "gdrive".
+    zip_file_id: 1YiuilFwQ15giQhVkeGJMhcR_t0QH5x7_
+    # Where the zip is extracted to. Downloaded once and reused on later runs if this
+    # directory is already populated -- matches dataset_name/eval_dataset_name above.
+    cache_dir: "data/synthetic/dataset"
+
+training:
+  output_dir: "outputs/sft-ds-assistant-diag"   # separate from outputs/sft-ds-assistant -- do not share a dir with the earlier run's checkpoints
+  num_train_epochs: 1         # max_steps overrides this
+  # max_steps overrides num_train_epochs. At batch 8 x grad_accum 4 the effective batch is 32, so
+  # max_samples: 50000 is ~1562 steps/epoch, and 1500 steps is ~1 pass over the subset.
+  max_steps: 1500
+  per_device_train_batch_size: 8   # sequences per forward/backward pass, per device
+  # The loss upcasts the logits (batch x seq_len x vocab) to fp32, and at vocab 151936 and
+  # max_seq_length 1536 that is ~0.9 GB per sequence in fp32 on top of the bf16 copy -- so eval at
+  # batch 8 costs ~11 GB of the card on its own. Comfortable on a 40GB A100, not on a small GPU.
+  per_device_eval_batch_size: 8    # sequences per eval batch, per device
+  gradient_accumulation_steps: 4   # effective batch size = train_batch_size * this
+  # Peak LR for the TinyLoRA vector v. NB: needs the decimal point -- PyYAML's default loader
+  # parses "2e-3" (no ".") as a string, not a float, and AdamW chokes on it.
+  #
+  # Pulled back 5x from 1.0e-2. With AdamW the per-step update is ~lr per param regardless of
+  # gradient scale, so at 1e-2 every step moved each scalar of v by up to half its whole init
+  # range (+/-0.02). The 5000-step run showed exactly what that does: train loss sat at 1.90-1.85
+  # from step 1000 to step 4000 and only started falling again in the last few hundred steps, as
+  # the linear decay finally took the LR under 1e-3. The optimizer was not converging, it was
+  # random-walking until the schedule shut it down.
+  learning_rate: 2.0e-3
+  # Hold a moderate LR through the middle of the run rather than decaying straight to zero.
+  lr_scheduler_type: "cosine"
+  # 45 steps (3% of max_steps) ramping in from 0, instead of landing the first optimizer step at
+  # the full peak LR. Rescale this by hand if max_steps changes -- it is an absolute step count,
+  # since transformers 5.x no longer accepts a warmup_ratio.
+  warmup_steps: 45
+  # Tighter than the HF default of 1.0. Logged grad norms on the last run swung between 0.55 and
+  # 4.7 batch to batch, so an outlier batch was landing a much larger update than a typical one.
+  max_grad_norm: 0.5
+  # v starts near zero already; decay here would fight the only thing training is moving.
+  weight_decay: 0.0
+  # AdamW default. Kept explicit because it is the knob that sets how much the update size is
+  # smoothed across noisy batches -- lower it only if v stops responding at all.
+  adam_beta2: 0.999
+  max_seq_length: 1536         # the overview and failure-map answers are long
+  logging_steps: 10            # how often (in steps) training loss is logged
+  # Every 50 steps over a 1500-step run: 30 evals. save_steps must stay a round multiple of
+  # eval_steps, because early_stopping's load_best_model_at_end needs a checkpoint at every eval
+  # it ranks.
+  eval_steps: 50                # how often (in steps) eval loss is computed
+  save_steps: 50                # how often (in steps) a checkpoint is written to output_dir
+  # Keep only the most recent few checkpoints (~16 MB each, mostly the bundled tokenizer copy).
+  # The best-scoring checkpoint is retained regardless, so load_best_model_at_end still works.
+  save_total_limit: 5
+  bf16: true                   # train in bfloat16; needs a GPU/accelerator that supports it
+  # Off: this recomputes activations on the backward pass to save memory, at roughly a 30-40%
+  # throughput cost. That is the right trade on a memory-bound device and the wrong one here,
+  # where the activations fit. Turn it back on if a larger batch or longer sequence runs out.
+  gradient_checkpointing: false
+  report_to: "none"            # disable external experiment trackers (e.g. wandb, tensorboard)
+  # Stop once eval_loss stops improving, and reload the best checkpoint seen at the end instead of
+  # just the last one. patience=1 is the strictest possible setting -- it halts on the first eval
+  # that isn't strictly better -- which on a small eval split scoring a few hundred trainable
+  # scalars fires on ordinary noise, ending the run almost immediately. patience=3 rides out that
+  # jitter so the run reaches max_steps unless the loss is genuinely flat. At 50-step evals,
+  # patience 5 means the run only stops after ~250 steps with no new best eval_loss.
+  early_stopping: true
+  early_stopping_patience: 5
+  early_stopping_threshold: 0.0
