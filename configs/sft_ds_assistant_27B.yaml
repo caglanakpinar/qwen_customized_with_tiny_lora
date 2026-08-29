@@ -7,7 +7,7 @@
 #     poetry run tiny-lora sft --config configs/sft_ds_assistant.yaml --no-quant
 
 model:
-  model_name_or_path: "Qwen/Qwen/Qwen3.8-27B"  # base model pulled from the Hugging Face Hub
+  model_name_or_path: "Qwen/Qwen3.8-27B"  # base model pulled from the Hugging Face Hub
   load_in_4bit: false          # full bf16; `--no-quant` forces this off regardless
   torch_dtype: "auto"          # let transformers pick the dtype the checkpoint was saved in
   trust_remote_code: false     # Qwen2.5 ships standard modeling code; no custom code needed
