@@ -42,6 +42,10 @@ poetry run tiny-lora info --config configs/grpo_default.yaml
 # Supervised fine-tuning (SFT)
 poetry run tiny-lora sft --config configs/sft_default.yaml
 
+# SFT with a from-scratch LoRA + Qwen implementation on TensorFlow -- no trl SFTTrainer/
+# GRPOTrainer, no peft; see src/lora_base/. Requires `poetry install -E tf-lora`.
+poetry run tiny-lora sft-tf --config configs/sft_lora_base.yaml
+
 # GRPO reinforcement learning (recommended for reasoning)
 poetry run tiny-lora grpo --config configs/grpo_default.yaml
 
