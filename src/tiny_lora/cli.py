@@ -134,6 +134,52 @@ def sft_lora_cmd(
     click.echo(f"SFT complete. Adapter saved to: {adapter_path}")
 
 
+@cli.command("sft-tf")
+@click.option(
+    "--config",
+    "config_path",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=DEFAULT_SFT_CONFIG,
+    show_default=True,
+    help="YAML config file (reads its lora_base: section).",
+)
+@click.option("--model", default=None, help="Override base model name or path.")
+@click.option("--r", type=int, default=None, help="LoRA rank.")
+@click.option("--lora-alpha", type=int, default=None, help="LoRA alpha (scaling numerator).")
+@click.option("--max-samples", type=int, default=None, help="Limit training samples.")
+@click.option("--output-dir", default=None, help="Override output directory.")
+def sft_tf_cmd(
+    config_path: Path,
+    model: str | None,
+    r: int | None,
+    lora_alpha: int | None,
+    max_samples: int | None,
+    output_dir: str | None,
+) -> None:
+    """Run supervised fine-tuning with a from-scratch LoRA implementation on TensorFlow.
+
+    No trl SFTTrainer/GRPOTrainer and no peft anywhere in this path -- the Qwen decoder, LoRA
+    layers, and training loop are all hand-written in `lora_base` (see its module docstrings).
+    Requires the `tf-lora` extra: `poetry install -E tf-lora`.
+    """
+    from lora_base.train_sft import run_sft_from_yaml as run_lora_base_sft_from_yaml
+
+    overrides: dict = {}
+    if model:
+        overrides.setdefault("model", {})["model_name_or_path"] = model
+    if r is not None:
+        overrides.setdefault("lora_base", {})["r"] = r
+    if lora_alpha is not None:
+        overrides.setdefault("lora_base", {})["lora_alpha"] = lora_alpha
+    if max_samples is not None:
+        overrides.setdefault("data", {})["max_samples"] = max_samples
+    if output_dir:
+        overrides.setdefault("training", {})["output_dir"] = output_dir
+
+    adapter_path = run_lora_base_sft_from_yaml(config_path, overrides)
+    click.echo(f"SFT complete. Adapter saved to: {adapter_path}")
+
+
 @cli.command("grpo")
 @click.option(
     "--config",
