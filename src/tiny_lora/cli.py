@@ -510,20 +510,46 @@ def chat_api_cmd(
     help="Where to write the JSON results [default: an evals/ folder inside --adapter].",
 )
 @click.option("--no-save", is_flag=True, help="Print the results without writing them to disk.")
+@click.option(
+    "--generation-samples",
+    type=int,
+    default=30,
+    show_default=True,
+    help="Also generate a reply for this many eval examples and score ROUGE-L/token-F1/code-valid-rate "
+    "against the reference. Slower than eval_loss (one generation pass per example, per model) -- "
+    "set 0 to skip and only report eval_loss/perplexity.",
+)
+@click.option(
+    "--max-new-tokens",
+    type=int,
+    default=256,
+    show_default=True,
+    help="Max tokens generated per reply when --generation-samples > 0.",
+)
 def eval_cmd(
     config_path: Path,
     adapter_path: Path,
     max_eval_samples: int | None,
     evals_dir: Path | None,
     no_save: bool,
+    generation_samples: int,
+    max_new_tokens: int,
 ) -> None:
-    """Compare base-model vs checkpoint eval loss/perplexity on the configured eval split."""
+    """Compare base-model vs checkpoint eval metrics on the configured eval split."""
     from tiny_lora.eval import run_eval
 
     overrides: dict = {}
     if max_eval_samples is not None:
         overrides.setdefault("data", {})["max_eval_samples"] = max_eval_samples
-    run_eval(config_path, adapter_path, overrides, evals_dir=evals_dir, save=not no_save)
+    run_eval(
+        config_path,
+        adapter_path,
+        overrides,
+        evals_dir=evals_dir,
+        save=not no_save,
+        generation_samples=generation_samples,
+        max_new_tokens=max_new_tokens,
+    )
 
 
 @cli.command("info")
