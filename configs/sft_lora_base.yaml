@@ -1,0 +1,42 @@
+# Supervised fine-tuning with lora_base: a from-scratch LoRA + Qwen implementation on
+# TensorFlow. No trl SFTTrainer/GRPOTrainer, no peft -- see src/lora_base/ module docstrings.
+#
+# Requires the tf-lora extra:
+#     poetry install -E tf-lora
+#
+# Then:
+#     poetry run tiny-lora sft-tf --config configs/sft_lora_base.yaml
+
+model:
+  model_name_or_path: "Qwen/Qwen2.5-0.5B-Instruct"
+  # "bfloat16", "float16", or "float32" for the frozen base weights/forward pass. LoRA's own
+  # A/B matrices always train in float32 regardless of this setting. CPU-only machines without
+  # good bf16 support should use "float32" here.
+  dtype: "bfloat16"
+  trust_remote_code: false
+
+lora_base:
+  r: 8
+  lora_alpha: 16
+  target_modules:
+    - q_proj
+    - v_proj
+  lora_dropout: 0.0
+  seed: 42
+
+data:
+  dataset_name: "openai/gsm8k"
+  dataset_config: "main"
+  split: "train"
+  max_samples: 500
+
+training:
+  output_dir: "outputs/sft-tf"
+  num_train_epochs: 1
+  per_device_train_batch_size: 2
+  gradient_accumulation_steps: 4
+  learning_rate: 2.0e-4
+  max_seq_length: 1024
+  logging_steps: 10
+  save_steps: 200
+  eval_steps: 100
