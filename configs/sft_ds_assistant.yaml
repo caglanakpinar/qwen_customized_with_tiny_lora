@@ -83,7 +83,7 @@ training:
   num_train_epochs: 1         # max_steps overrides this
   # max_steps overrides num_train_epochs. At batch 8 x grad_accum 4 the effective batch is 32, so
   # max_samples: 50000 is ~1562 steps/epoch, and 1500 steps is ~1 pass over the subset.
-  max_steps: 1500
+  max_steps: 12000
   per_device_train_batch_size: 8   # sequences per forward/backward pass, per device
   # The loss upcasts the logits (batch x seq_len x vocab) to fp32, and at vocab 151936 and
   # max_seq_length 1536 that is ~0.9 GB per sequence in fp32 on top of the bf16 copy -- so eval at
