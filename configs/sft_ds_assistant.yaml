@@ -79,7 +79,7 @@ data:
     cache_dir: "data/synthetic/dataset"
 
 training:
-  output_dir: "outputs/sft-ds-assistant-diag"   # separate from outputs/sft-ds-assistant -- do not share a dir with the earlier run's checkpoints
+  output_dir: "outputs/sft-ds-assistant"   # separate from outputs/sft-ds-assistant -- do not share a dir with the earlier run's checkpoints
   num_train_epochs: 1         # max_steps overrides this
   # max_steps overrides num_train_epochs. At batch 8 x grad_accum 4 the effective batch is 32, so
   # max_samples: 50000 is ~1562 steps/epoch, and 1500 steps is ~1 pass over the subset.
