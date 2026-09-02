@@ -17,7 +17,7 @@ set -euo pipefail
 
 REPO_URL="https://github.com/caglanakpinar/qwen_customized_with_tiny_lora.git"
 REPO_DIR="${REPO_DIR:-qwen_customized_with_tiny_lora}"
-CONFIG="${CONFIG:-configs/sft_ds_assistant_27B.yaml}"
+CONFIG="${CONFIG:-configs/sft_ds_assistant.yaml}"
 
 # Clone only when the target isn't already a checkout, so re-running the script updates in place
 # instead of failing on a non-empty directory.
