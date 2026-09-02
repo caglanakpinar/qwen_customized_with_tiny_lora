@@ -20,11 +20,38 @@
   // Minimal markdown: fenced code blocks, inline code, and **bold** on top of escaped text.
   function renderMarkdown(rawText) {
     const escaped = escapeHtml(rawText);
-    const withCodeBlocks = escaped.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, _lang, code) => {
-      return `<pre><code>${code.replace(/\n$/, "")}</code></pre>`;
+    const withCodeBlocks = escaped.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
+      const cleanCode = code.replace(/\n$/, "");
+      const label = lang || "text";
+      return (
+        `<div class="code-block">` +
+        `<div class="code-block-header">` +
+        `<span class="code-lang">${label}</span>` +
+        `<button type="button" class="copy-btn">Copy</button>` +
+        `</div>` +
+        `<pre><code class="language-${label}">${cleanCode}</code></pre>` +
+        `</div>`
+      );
     });
     const withInlineCode = withCodeBlocks.replace(/`([^`\n]+)`/g, "<code>$1</code>");
     return withInlineCode.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  }
+
+  function wireCodeBlockCopyButtons(container) {
+    container.querySelectorAll(".copy-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const code = btn.closest(".code-block").querySelector("code").textContent;
+        navigator.clipboard.writeText(code).then(() => {
+          const original = btn.textContent;
+          btn.textContent = "Copied";
+          btn.disabled = true;
+          setTimeout(() => {
+            btn.textContent = original;
+            btn.disabled = false;
+          }, 1500);
+        });
+      });
+    });
   }
 
   function scrollToBottom() {
@@ -46,6 +73,7 @@
     const bubble = document.createElement("div");
     bubble.className = "bubble";
     bubble.innerHTML = renderMarkdown(text);
+    wireCodeBlockCopyButtons(bubble);
 
     wrapper.appendChild(label);
     wrapper.appendChild(bubble);

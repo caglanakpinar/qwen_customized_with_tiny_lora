@@ -179,13 +179,55 @@ body {
   font-family: "SFMono-Regular", Menlo, Consolas, monospace;
 }
 
-.bubble pre {
+.code-block {
   background: #2b2823;
   color: #f2ede2;
   border-radius: 0.6rem;
+  overflow: hidden;
+  margin: 0.5rem 0;
+}
+
+.code-block-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.45rem 0.85rem;
+  background: #201e1a;
+  border-bottom: 1px solid rgba(242, 237, 226, 0.08);
+}
+
+.code-lang {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: rgba(242, 237, 226, 0.55);
+  font-family: "SFMono-Regular", Menlo, Consolas, monospace;
+}
+
+.copy-btn {
+  border: none;
+  background: transparent;
+  color: rgba(242, 237, 226, 0.65);
+  font-size: 0.75rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: 0.35rem;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.copy-btn:hover:not(:disabled) {
+  background: rgba(242, 237, 226, 0.1);
+  color: #f2ede2;
+}
+
+.copy-btn:disabled {
+  cursor: default;
+}
+
+.bubble pre {
   padding: 0.85rem 1rem;
   overflow-x: auto;
-  margin: 0.5rem 0;
+  margin: 0;
 }
 
 .bubble pre code {
