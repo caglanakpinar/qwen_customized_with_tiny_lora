@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+#
+# Compare base-model vs checkpoint eval loss/perplexity on the configured eval split.
+#
+#     bash eval.sh
+#
+# Environment overrides:
+#     CONFIG            training config supplying the eval split   (default: configs/sft_ds_assistant.yaml)
+#     ADAPTER           adapter or checkpoint dir to evaluate       (default: outputs/sft-ds-assistant/adapter,
+#                                                                     falling back to the newest checkpoint-N/
+#                                                                     under the same dir if the adapter isn't
+#                                                                     written yet)
+#     MAX_EVAL_SAMPLES  cap the eval split to this many rows        (default: unset -- use the config's cap)
+#     EVALS_DIR         where to write the JSON results             (default: unset -- an evals/ folder inside --adapter)
+#     NO_SAVE           set to 1 to print without writing to disk   (default: unset)
+
+set -euo pipefail
+
+CONFIG="${CONFIG:-configs/sft_ds_assistant.yaml}"
+
+# --adapter is outputs/sft-ds-assistant/adapter/ (written once SFT completes) or, while a run is
+# still in progress or was interrupted early, the newest checkpoint-N/ under the same dir.
+DEFAULT_ADAPTER="outputs/sft-ds-assistant/adapter"
+if [ ! -d "$DEFAULT_ADAPTER" ]; then
+  DEFAULT_ADAPTER="$(ls -dt outputs/sft-ds-assistant/checkpoint-*/ 2>/dev/null | head -1)"
+fi
+
+ADAPTER="${ADAPTER:-$DEFAULT_ADAPTER}"
+
+if [ -z "$ADAPTER" ]; then
+  echo "==> No adapter found under outputs/sft-ds-assistant/; set ADAPTER=<dir> and re-run" >&2
+  exit 1
+fi
+
+args=(eval --config "$CONFIG" --adapter "$ADAPTER")
+[ -n "${MAX_EVAL_SAMPLES:-}" ] && args+=(--max-eval-samples "$MAX_EVAL_SAMPLES")
+[ -n "${EVALS_DIR:-}" ] && args+=(--evals-dir "$EVALS_DIR")
+[ "${NO_SAVE:-}" = "1" ] && args+=(--no-save)
+
+echo "==> Evaluating $ADAPTER against $CONFIG"
+poetry run tiny-lora "${args[@]}"
