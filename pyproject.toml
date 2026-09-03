@@ -4,7 +4,12 @@ version = "0.1.0"
 description = "TinyLoRA training pipeline for LLMs"
 authors = ["caglanakpinar"]
 readme = "README.md"
-packages = [{ include = "tiny_lora", from = "src" }, { include = "standard_lora", from = "src" }]
+packages = [
+    { include = "tiny_lora", from = "src" },
+    { include = "standard_lora", from = "src" },
+    { include = "lora_base", from = "src" },
+    { include = "layer_lora", from = "src" },
+]
 
 [tool.poetry.dependencies]
 python = "^3.10"
@@ -23,6 +28,10 @@ sentencepiece = "^0.2.0"
 protobuf = "^4.25.0"
 feature-store-agent = {git = "https://github.com/caglanakpinar/feature-store-agent.git"}
 gdown = { version = "^5.2.0", optional = true }
+# lora_base: a from-scratch Qwen + LoRA implementation on TensorFlow (no trl/peft). transformers
+# has no TFQwen* classes, so this loads config.json/safetensors directly instead.
+tensorflow = { version = "^2.17", optional = true }
+safetensors = { version = "^0.8.0", optional = true }
 pathlib = "^1.0.1"
 langchain-core = "^0.3.0"
 chromadb = "^1.5.9"
@@ -34,6 +43,7 @@ uvicorn = { extras = ["standard"], version = "^0.34.0" }
 [tool.poetry.extras]
 quant = ["bitsandbytes"]
 gdrive = ["gdown"]
+tf-lora = ["tensorflow", "safetensors"]
 
 # Needed to build the knowledge stores and generate the synthetic dataset under `data/`.
 # Not needed to train on an already-generated dataset.
@@ -66,6 +76,7 @@ jupyterlab = "^4.6.3"
 
 [tool.poetry.scripts]
 tiny-lora = "tiny_lora.cli:cli"
+layer_lora = "layer_lora.cli:cli"
 
 [build-system]
 requires = ["poetry-core"]
