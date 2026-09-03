@@ -1,0 +1,92 @@
+# Layer-scoped LoRA: fine-tune specific transformer layers on the synthetic data-science
+# assistant dataset, leaving every other layer at its base weights.
+#
+# Build the dataset first (or set data.reader: "gdrive" below):
+#     bash data_generate.sh
+#
+# Then:
+#     poetry run layer_lora sft --config configs/sft_layer_lora.yaml --no-quant
+#
+# The layers to adapt can also be given on the command line, which overrides `layer_lora.layers`:
+#     poetry run layer_lora sft --config configs/sft_layer_lora.yaml --layers 20-23 --no-quant
+
+model:
+  model_name_or_path: "Qwen/Qwen2.5-0.5B-Instruct"  # base model pulled from the Hugging Face Hub
+  load_in_4bit: false          # full bf16; `--no-quant` forces this off regardless
+  torch_dtype: "auto"          # let transformers pick the dtype the checkpoint was saved in
+  trust_remote_code: false     # Qwen2.5 ships standard modeling code; no custom code needed
+  attn_implementation: null    # let transformers pick (e.g. sdpa); set "flash_attention_2" where supported
+
+layer_lora:
+  # Which transformer layers get an adapter, by 0-based index. Qwen2.5-0.5B-Instruct has 24
+  # layers, numbered 0-23, so this adapts the last four and leaves layers 0-19 frozen at their
+  # base weights. An index outside 0-23 is rejected before the model loads rather than silently
+  # matching nothing.
+  #
+  # The last layers are a reasonable default to start from: they carry the most task-specific
+  # representation, so a small adapter placed there moves output style/format the most per
+  # trained parameter. Adapting early layers instead changes lower-level features and tends to
+  # need a smaller learning rate to stay stable.
+  layers: [20, 21, 22, 23]
+  # The attention projections this module targets. o_proj and the MLP projections
+  # (gate_proj, up_proj, down_proj) can be added here to widen the adapter.
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+  layers_pattern: "layers"     # the name segment before the layer index in `model.layers.N`
+  r: 8                         # LoRA rank -- width of the trainable A/B low-rank update
+  lora_alpha: 16               # update is scaled by lora_alpha / r
+  lora_dropout: 0.05           # dropout on the LoRA path during training
+  bias: "none"                 # "none", "all", or "lora_only" -- which biases also train
+  use_rslora: false            # rank-stabilized scaling (alpha / sqrt(r)); off matches the original LoRA paper
+  # Where the adapter starts from:
+  #   null    -- a fresh, zero-initialised adapter on top of the base model
+  #   "auto"  -- continue from <training.output_dir>/adapter if a previous run finished one
+  #   <path>  -- continue from that saved adapter / checkpoint-N directory
+  # The checkpoint must be a LoRA adapter covering these same layers and target_modules; a
+  # mismatch is refused rather than loaded, since the saved adapter's own config would win.
+  # An *interrupted* run is picked up separately and automatically from
+  # <training.output_dir>/checkpoint-N, with optimizer and scheduler state intact.
+  init_from_checkpoint: null
+
+data:
+  # "local" reads dataset_name/eval_dataset_name straight off disk. "gdrive" first downloads
+  # a zip from Google Drive into gdrive.cache_dir and extracts it there, then reads the same
+  # paths -- so once downloaded, both readers behave identically.
+  reader: "gdrive"
+  dataset_name: "data/synthetic/dataset/sft_train-*.jsonl"   # training shards
+  eval_dataset_name: "data/synthetic/dataset/sft_eval.jsonl" # held-out split, enables eval loss
+  max_samples: 50000            # cap on training rows read from the glob
+  max_eval_samples: 500         # eval runs every eval_steps and scores this whole split each time
+  gdrive:
+    zip_file_id: 14ArCXRlWTTmEl5h2QqjuJU4Xto45OYs2
+    cache_dir: "data/synthetic/dataset"
+
+training:
+  output_dir: "outputs/sft-layer-lora"   # keep separate from the TinyLoRA run's checkpoints
+  num_train_epochs: 1          # max_steps overrides this
+  max_steps: 2000
+  per_device_train_batch_size: 8   # sequences per forward/backward pass, per device
+  per_device_eval_batch_size: 8    # sequences per eval batch, per device
+  gradient_accumulation_steps: 4   # effective batch size = train_batch_size * this
+  # LoRA trains real low-rank matrices rather than TinyLoRA's handful of scalars, so it wants a
+  # far lower LR than sft_ds_assistant.yaml's 2e-3. NB: needs the decimal point -- PyYAML parses
+  # "2e-4" (no ".") as a string, not a float, and AdamW chokes on it.
+  learning_rate: 2.0e-4
+  lr_scheduler_type: "cosine"  # hold a moderate LR through the middle rather than decaying to zero
+  warmup_steps: 60             # 3% of max_steps, ramping in from 0
+  max_grad_norm: 1.0           # rescale gradients whose global norm exceeds this
+  weight_decay: 0.0
+  adam_beta2: 0.999
+  max_seq_length: 1536         # the overview and failure-map answers are long
+  logging_steps: 10
+  eval_steps: 50               # how often (in steps) eval loss is computed
+  save_steps: 50               # must stay a round multiple of eval_steps when early_stopping is on
+  save_total_limit: 5          # keep only the most recent few checkpoints; the best one is exempt
+  bf16: true                   # train in bfloat16; needs a GPU/accelerator that supports it
+  gradient_checkpointing: false  # recomputes activations to save memory, at ~30-40% throughput
+  report_to: "none"            # disable external experiment trackers (e.g. wandb, tensorboard)
+  early_stopping: true         # stop once eval_loss stops improving, and reload the best checkpoint
+  early_stopping_patience: 5
+  early_stopping_threshold: 0.0
