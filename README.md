@@ -46,6 +46,9 @@ poetry run tiny-lora sft --config configs/sft_default.yaml
 # GRPOTrainer, no peft; see src/lora_base/. Requires `poetry install -E tf-lora`.
 poetry run tiny-lora sft-tf --config configs/sft_lora_base.yaml
 
+# SFT on specific transformer layers only -- see `layer_lora` below
+poetry run layer_lora sft --config configs/sft_layer_lora.yaml --layers 20-23
+
 # GRPO reinforcement learning (recommended for reasoning)
 poetry run tiny-lora grpo --config configs/grpo_default.yaml
 
@@ -225,6 +228,62 @@ conflicts with this project's `protobuf ^4.25.0` (needed by transformers/sentenc
 separately in whichever environment runs `chat-api`, e.g. `pip install kserve` (the same
 arrangement `grpo` uses for `vllm`).
 
+## `layer_lora`: fine-tuning specific layers
+
+`layer_lora` trains a standard LoRA adapter on **only the transformer layers you name**, leaving
+every other layer at its base weights. It has its own CLI:
+
+```bash
+# Adapt layers 20-23 (the last four of Qwen2.5-0.5B's 24)
+poetry run layer_lora sft --config configs/sft_layer_lora.yaml --layers 20-23 --no-quant
+
+# A single layer, or an arbitrary mix -- ranges are inclusive on both ends
+poetry run layer_lora sft --config configs/sft_layer_lora.yaml --layers 7
+poetry run layer_lora sft --config configs/sft_layer_lora.yaml --layers 0-3,11,20-23
+```
+
+Which layers to adapt is the point of the module, so it is checked rather than assumed: an index
+outside the model's layer count is rejected before any weights load, and the run prints the layers
+and projections that actually received an adapter.
+
+```
+Adapted layer 22: k_proj, q_proj, v_proj, layer 23: k_proj, q_proj, v_proj.
+trainable params: 61,440 || all params: 494,094,208 || trainable%: 0.0124
+```
+
+| `layer_lora:` key | Default | Description |
+|---|---|---|
+| `layers` | *(required)* | Transformer layers to adapt, by 0-based index. |
+| `target_modules` | `q_proj, k_proj, v_proj` | Projections adapted within each of those layers. |
+| `layers_pattern` | `layers` | Name segment before the layer index in `model.layers.N`. |
+| `r` / `lora_alpha` | `8` / `16` | LoRA rank and scaling numerator. |
+| `init_from_checkpoint` | `null` | `null`, `"auto"`, or a path — see below. |
+
+### Continuing from a checkpoint
+
+Two separate mechanisms pick up earlier weights, and they do different things:
+
+- **`init_from_checkpoint`** starts a *new* run from a **finished** adapter. `"auto"` uses
+  `<output_dir>/adapter` if a previous run left one and starts from the base model otherwise; a
+  path points anywhere, including another run's `checkpoint-N`.
+- **An interrupted run** is resumed automatically from `<output_dir>/checkpoint-N`, restoring the
+  optimizer and LR-schedule state along with the weights. This is the more complete restore, so it
+  takes precedence when both apply.
+
+A checkpoint whose saved config does not match the yaml is **refused, not loaded** — PEFT treats a
+saved adapter's own config as authoritative, so loading a mismatched one would quietly train
+different layers than the config asks for:
+
+```
+ValueError: .../adapter adapts layers [23], but this config asks for [10]. The saved adapter's
+own config wins when it is loaded, so continuing from it would not train the layers configured
+here. Align layer_lora.layers with the checkpoint, or drop init_from_checkpoint to start a
+fresh adapter.
+```
+
+TinyLoRA checkpoints (`outputs/sft-ds-assistant/…`) are a different PEFT method and cannot be
+resumed here; that is reported the same way.
+
 ## Project Structure
 
 ```
@@ -233,7 +292,8 @@ llm_with_tiny_lora/
 ├── configs/
 │   ├── sft_default.yaml        # SFT defaults (gsm8k)
 │   ├── grpo_default.yaml       # GRPO defaults (gsm8k)
-│   └── sft_ds_assistant.yaml   # SFT on the synthetic data-science set
+│   ├── sft_ds_assistant.yaml   # SFT on the synthetic data-science set
+│   └── sft_layer_lora.yaml     # Layer-scoped LoRA on the same set
 ├── outputs/                 # Checkpoints + saved adapters, written by `sft`/`grpo` (per output_dir)
 │   └── sft-ds-assistant/
 │       ├── checkpoint-N/        # periodic checkpoint, written every training.save_steps
@@ -242,6 +302,11 @@ llm_with_tiny_lora/
 │   ├── app.py                  # FastAPI backend (/, /api/chat, /api/reset)
 │   └── static/                  # HTML/CSS/JS chat frontend, no build step
 ├── mobile/                  # Android client for the same /api/chat routes (see mobile/README.md)
+├── src/layer_lora/          # Layer-scoped LoRA (`poetry run layer_lora sft`)
+│   ├── cli.py                  # Click CLI entry point
+│   ├── config.py               # LayerLoraConfig (`layer_lora:` yaml section)
+│   ├── model.py                # Layer-restricted adapter build + checkpoint reuse
+│   └── train_sft.py            # SFT pipeline, reusing tiny_lora's run_sft_core
 └── src/tiny_lora/
     ├── cli.py              # Click CLI entry point
     ├── config.py           # Config dataclasses & YAML loader
