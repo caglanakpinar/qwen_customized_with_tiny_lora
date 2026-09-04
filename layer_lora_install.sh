@@ -10,13 +10,13 @@
 #
 # The layer_lora counterpart to install.sh: same clone/install/dataset preamble, but the run at
 # the end is `layer_lora sft` against configs/sft_layer_lora.yaml with layer 23 alone selected.
-# Every layer other than 23 keeps its base weights and never receives a gradient.
+# Every layer other than 21 keeps its base weights and never receives a gradient.
 #
 # Environment overrides:
 #     REPO_DIR          where to clone to                          (default: ./qwen_customized_with_tiny_lora,
 #                                                                    skipped entirely when run from inside a checkout)
 #     CONFIG            training config to run                     (default: configs/sft_layer_lora.yaml)
-#     LAYERS            layers to fine-tune, e.g. 23 or 20-23      (default: 23)
+#     LAYERS            layers to fine-tune, e.g. 21 or 20-21      (default: 21)
 #     TARGET_MODULES    projections to adapt within those layers   (default: unset -- the config's list)
 #     INIT_CHECKPOINT   continue from a saved adapter instead of   (default: unset -- fresh adapter on LAYERS)
 #                       starting fresh; a path, or "auto"
@@ -35,7 +35,7 @@ set -euo pipefail
 REPO_URL="https://github.com/caglanakpinar/qwen_customized_with_tiny_lora.git"
 REPO_DIR="${REPO_DIR:-qwen_customized_with_tiny_lora}"
 CONFIG="${CONFIG:-configs/sft_layer_lora.yaml}"
-LAYERS="${LAYERS:-23}"
+LAYERS="${LAYERS:-21}"
 
 # Running this from inside an existing checkout must not clone a second copy underneath it --
 # that is how a nested qwen_customized_with_tiny_lora/ ends up shadowing the real one. Detect the
