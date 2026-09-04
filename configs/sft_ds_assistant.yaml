@@ -53,6 +53,57 @@ standard_lora:
   bias: "none"                  # "none", "all", or "lora_only" -- which biases also train
   use_rslora: false             # rank-stabilized scaling (alpha / sqrt(r)); off matches the original LoRA paper
 
+# Used instead of `tinylora:`/`standard_lora:` when training via `layer_lora sft` -- re-tune a
+# handful of transformer layers of an already-trained adapter, leaving every other layer exactly
+# as the checkpoint had it:
+#
+#     poetry run layer_lora sft --config configs/sft_ds_assistant.yaml --no-quant
+#
+# The `training:` block below is shared with the TinyLoRA run, so its 12000 steps are sized for
+# training all 24 layers from scratch. Re-tuning one layer's 896 scalars saturates long before
+# that; steer it from the command line rather than editing the shared block:
+#
+#     poetry run layer_lora sft --config configs/sft_ds_assistant.yaml \
+#         --layers 22-23 --max-steps 2000 --no-quant
+layer_lora:
+  # Continue from the TinyLoRA run's best checkpoint rather than from the base model. That
+  # adapter covers all 24 layers x 7 projections; everything outside `layers`/`target_modules`
+  # below is frozen right after it loads, so the optimizer only moves the layers named here.
+  # The adapter written at the end still carries all 24 layers -- the named ones newly
+  # fine-tuned, the rest byte-for-byte as this checkpoint had them.
+  #
+  # Naming a checkpoint also turns off the trainer's own "resume the interrupted run in
+  # output_dir" behaviour, which would otherwise find this same directory's newest checkpoint
+  # and overwrite the adapter just loaded, LR schedule and step count included.
+  init_from_checkpoint: "outputs/sft-ds-assistant/checkpoint-12000"
+  # Which transformer layers to re-tune, by 0-based index. Qwen2.5-0.5B-Instruct has 24 layers,
+  # numbered 0-23, so this moves the last one only. An index outside 0-23, or one the checkpoint
+  # has no adapter for, is rejected before the model loads rather than training nothing.
+  #
+  # The last layers are the ones to reach for first: they carry the most task-specific
+  # representation, so re-tuning there moves output style and format the most per trained
+  # scalar. Re-tuning an early layer changes lower-level features and wants a smaller LR to
+  # stay stable.
+  layers: [23]
+  # Must be a subset of the checkpoint's target_modules. All seven are listed because that is
+  # what the TinyLoRA run adapted -- trimming this list narrows what re-trains within `layers`.
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj
+  layers_pattern: "layers"     # the name segment before the layer index in `model.layers.N`
+  # Only read when init_from_checkpoint is null, i.e. when a fresh LoRA adapter is built on
+  # `layers` instead of continuing one. Continuing takes its geometry from the checkpoint.
+  r: 8                         # LoRA rank -- width of the trainable A/B low-rank update
+  lora_alpha: 16               # update is scaled by lora_alpha / r
+  lora_dropout: 0.05           # dropout on the LoRA path during training
+  bias: "none"                 # "none", "all", or "lora_only" -- which biases also train
+  use_rslora: false            # rank-stabilized scaling (alpha / sqrt(r))
+
 data:
   # "local" reads dataset_name/eval_dataset_name straight off disk. "gdrive" first downloads
   # a zip from Google Drive into gdrive.cache_dir and extracts it there, then reads the same
@@ -121,9 +172,13 @@ training:
   # it ranks.
   eval_steps: 50                # how often (in steps) eval loss is computed
   save_steps: 50                # how often (in steps) a checkpoint is written to output_dir
-  # Keep only the most recent few checkpoints (~16 MB each, mostly the bundled tokenizer copy).
-  # The best-scoring checkpoint is retained regardless, so load_best_model_at_end still works.
-  save_total_limit: 5
+  # Every checkpoint is kept (~16 MB each, mostly the bundled tokenizer copy). Not capped,
+  # because two runs now write here: rotation deletes the lowest-numbered `checkpoint-N` in
+  # output_dir, and it does not know that checkpoint-12000 is what `layer_lora` above starts
+  # from -- capping this would delete the source weights partway through that run. layer_lora
+  # refuses to start rather than let that happen; set a cap again only alongside its
+  # --output-dir.
+  save_total_limit: null
   bf16: true                   # train in bfloat16; needs a GPU/accelerator that supports it
   # Off: this recomputes activations on the backward pass to save memory, at roughly a 30-40%
   # throughput cost. That is the right trade on a memory-bound device and the wrong one here,
