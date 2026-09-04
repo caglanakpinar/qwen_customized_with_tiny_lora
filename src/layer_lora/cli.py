@@ -81,6 +81,8 @@ def cli() -> None:
     help="Continue from a saved adapter: a path, or 'auto' for <output-dir>/adapter.",
 )
 @click.option("--max-samples", type=int, default=None, help="Limit training samples.")
+@click.option("--max-steps", type=int, default=None, help="Cap total optimizer steps.")
+@click.option("--learning-rate", type=float, default=None, help="Peak learning rate.")
 @click.option("--output-dir", default=None, help="Override output directory.")
 @click.option("--no-quant", is_flag=True, help="Disable 4-bit quantization (use bf16).")
 def sft_cmd(
@@ -92,6 +94,8 @@ def sft_cmd(
     lora_alpha: int | None,
     init_from_checkpoint: str | None,
     max_samples: int | None,
+    max_steps: int | None,
+    learning_rate: float | None,
     output_dir: str | None,
     no_quant: bool,
 ) -> None:
@@ -115,6 +119,10 @@ def sft_cmd(
         overrides.setdefault("layer_lora", {})["init_from_checkpoint"] = init_from_checkpoint
     if max_samples is not None:
         overrides.setdefault("data", {})["max_samples"] = max_samples
+    if max_steps is not None:
+        overrides.setdefault("training", {})["max_steps"] = max_steps
+    if learning_rate is not None:
+        overrides.setdefault("training", {})["learning_rate"] = learning_rate
     if output_dir:
         overrides.setdefault("training", {})["output_dir"] = output_dir
 

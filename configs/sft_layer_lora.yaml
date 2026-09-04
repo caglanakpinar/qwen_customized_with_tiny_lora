@@ -44,10 +44,16 @@ layer_lora:
   #   null    -- a fresh, zero-initialised adapter on top of the base model
   #   "auto"  -- continue from <training.output_dir>/adapter if a previous run finished one
   #   <path>  -- continue from that saved adapter / checkpoint-N directory
-  # The checkpoint must be a LoRA adapter covering these same layers and target_modules; a
-  # mismatch is refused rather than loaded, since the saved adapter's own config would win.
-  # An *interrupted* run is picked up separately and automatically from
-  # <training.output_dir>/checkpoint-N, with optimizer and scheduler state intact.
+  # The checkpoint has to *cover* the layers and target_modules above, but it does not have to
+  # match them: continuing from an adapter trained on every layer in order to re-tune only the
+  # ones named here is the main reason this setting exists. Everything outside the selection is
+  # frozen after loading, so the adapter written at the end still carries all of the
+  # checkpoint's layers, with the named ones newly fine-tuned. Both LoRA and TinyLoRA
+  # checkpoints work. A checkpoint missing a layer or projection named above is refused.
+  #
+  # Naming a checkpoint here also turns off the automatic resume of an *interrupted* run from
+  # <training.output_dir>/checkpoint-N -- the two are mutually exclusive, and resuming would
+  # overwrite the adapter this setting just loaded.
   init_from_checkpoint: null
 
 data:

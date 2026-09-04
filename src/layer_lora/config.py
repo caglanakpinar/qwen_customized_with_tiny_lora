@@ -31,10 +31,15 @@ class LayerLoraConfig:
     use_rslora: bool = False      # rank-stabilized scaling (alpha / sqrt(r) instead of alpha / r)
     # Where the adapter weights start from, instead of LoRA's usual zero-init:
     #   None     -- fresh adapter, train the chosen layers from the base model
-    #   "auto"   -- continue from the newest adapter under training.output_dir if there is one,
+    #   "auto"   -- continue from <training.output_dir>/adapter if a previous run finished one,
     #               otherwise behave as None. Lets the same config be re-run to extend a run.
     #   <path>   -- continue from that specific saved adapter / checkpoint-N directory
-    # Only LoRA adapters can be loaded here, and only ones covering the same `layers` -- see
-    # `resolve_init_checkpoint`, which refuses the alternatives instead of silently training
-    # something other than what the config asks for.
+    #
+    # A named checkpoint does not have to be layer-scoped itself: continuing from an adapter
+    # trained on every layer, in order to move only the layers named above, is the main reason
+    # this setting exists. Everything outside `layers`/`target_modules` is frozen after loading,
+    # so the adapter written at the end still carries all of its layers -- the named ones newly
+    # fine-tuned, the rest byte-for-byte as the checkpoint had them. What is refused is a
+    # checkpoint that does not *cover* the configured layers and modules; see
+    # `resolve_init_checkpoint`. Both LoRA and TinyLoRA checkpoints can be continued from.
     init_from_checkpoint: str | None = None
