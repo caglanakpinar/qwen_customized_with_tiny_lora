@@ -76,13 +76,25 @@ def resolve_resume_checkpoint(output_dir: Path) -> str | None:
     return None
 
 
-def run_sft_core(model, tokenizer, data_cfg: DataConfig, train_cfg: SFTTrainingConfig) -> str:
+def run_sft_core(
+    model,
+    tokenizer,
+    data_cfg: DataConfig,
+    train_cfg: SFTTrainingConfig,
+    resume: bool = True,
+) -> str:
     """Adapter-agnostic SFT loop: build the dataset, Trainer, and run training.
 
     `model` must already have its adapter attached (TinyLoRA, standard LoRA, ...) -- this
     function only knows about the generic PEFT-model/Trainer plumbing, not any particular
     adapter type. `run_sft` below is the TinyLoRA entry point; `standard_lora.train_sft` calls
     this directly with a LoRA-wrapped model instead.
+
+    `resume=False` starts a fresh run even when `output_dir` already holds `checkpoint-N`
+    directories. Callers pass it when the weights in `model` came from somewhere the trainer
+    does not know about -- `layer_lora`'s `init_from_checkpoint`, say -- since resuming would
+    otherwise overwrite them with whatever the last checkpoint in `output_dir` happens to hold,
+    and restore that run's step count and LR schedule along with it.
     """
     # Mirrors the `eval_dataset is not None` check below: `prepare_sft_eval_dataset` returns
     # None exactly when `eval_dataset_name` is unset. Checked here, before any model/data
@@ -166,7 +178,7 @@ def run_sft_core(model, tokenizer, data_cfg: DataConfig, train_cfg: SFTTrainingC
         processing_class=tokenizer,
         callbacks=callbacks,
     )
-    trainer.train(resume_from_checkpoint=resolve_resume_checkpoint(output_dir))
+    trainer.train(resume_from_checkpoint=resolve_resume_checkpoint(output_dir) if resume else None)
     trainer.save_model(str(output_dir / "adapter"))
     tokenizer.save_pretrained(str(output_dir / "adapter"))
     return str(output_dir / "adapter")
