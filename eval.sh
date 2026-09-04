@@ -13,6 +13,7 @@
 #     MAX_EVAL_SAMPLES  cap the eval split to this many rows        (default: unset -- use the config's cap)
 #     EVALS_DIR         where to write the JSON results             (default: unset -- an evals/ folder inside --adapter)
 #     NO_SAVE           set to 1 to print without writing to disk   (default: unset)
+#     SKIP_INSTALL      set to 1 to skip the poetry install step    (default: unset -- deps are installed)
 
 set -euo pipefail
 
@@ -30,6 +31,24 @@ ADAPTER="${ADAPTER:-$DEFAULT_ADAPTER}"
 if [ -z "$ADAPTER" ]; then
   echo "==> No adapter found under outputs/sft-ds-assistant/; set ADAPTER=<dir> and re-run" >&2
   exit 1
+fi
+
+# Dependencies come after the adapter check on purpose: a missing adapter should fail in a
+# second, not after the install. Mirrors install.sh from here -- `command -v` keeps a second run
+# from reinstalling poetry, and -E gdrive pulls in gdown, which the configs' data.reader:
+# "gdrive" needs to fetch the eval split.
+if [ "${SKIP_INSTALL:-}" = "1" ]; then
+  echo "==> SKIP_INSTALL=1 set; using whatever is already installed"
+else
+  if command -v poetry >/dev/null 2>&1; then
+    echo "==> poetry already installed: $(poetry --version)"
+  else
+    echo "==> Installing poetry"
+    pip install poetry
+  fi
+
+  echo "==> Installing dependencies (with the gdrive extra)"
+  poetry install -E gdrive
 fi
 
 args=(eval --config "$CONFIG" --adapter "$ADAPTER")
