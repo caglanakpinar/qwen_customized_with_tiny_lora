@@ -66,7 +66,7 @@ data:
   max_samples: 50000            # cap on training rows read from the glob
   max_eval_samples: 500         # eval runs every eval_steps and scores this whole split each time
   gdrive:
-    zip_file_id: 14ArCXRlWTTmEl5h2QqjuJU4Xto45OYs2
+    zip_file_id: 1WmtVMi3c1HrTpMzMLOL6Drxqz8QfGwjD
     cache_dir: "data/synthetic/dataset"
 
 training:
