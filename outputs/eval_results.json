@@ -1,0 +1,93 @@
+{
+  "description": "Hand-collected benchmark comparisons across the two adapter methods trained in this repo, each scored base-model vs checkpoint on the same held-out data-science-assistant eval split. See eval.py for the metric definitions.",
+  "eval_dataset": "data/synthetic/dataset/sft_eval.jsonl",
+  "benchmarks": [
+    {
+      "label": "tiny_lora checkpoint-5750 (run 1)",
+      "method": "tiny_lora",
+      "adapter": "outputs/sft-ds-assistant/checkpoint-5750",
+      "results": {
+        "base": {
+          "eval_loss": 2.5823,
+          "perplexity": 13.2276,
+          "rouge_l_f1": 0.1086,
+          "token_f1": 0.2163,
+          "code_valid_rate": 0.0385
+        },
+        "checkpoint": {
+          "eval_loss": 1.8519,
+          "perplexity": 6.3720,
+          "rouge_l_f1": 0.0988,
+          "token_f1": 0.1629,
+          "code_valid_rate": 0.2308
+        }
+      },
+      "delta": {
+        "eval_loss": -0.7304,
+        "perplexity": -6.8556,
+        "perplexity_ratio": 0.4818,
+        "rouge_l_f1": -0.0098,
+        "token_f1": -0.0534,
+        "code_valid_rate": 0.1923
+      }
+    },
+    {
+      "label": "tiny_lora checkpoint-5750 (run 2)",
+      "method": "tiny_lora",
+      "adapter": "outputs/sft-ds-assistant/checkpoint-5750",
+      "results": {
+        "base": {
+          "eval_loss": 2.5823,
+          "perplexity": 13.2276,
+          "rouge_l_f1": 0.1086,
+          "token_f1": 0.2163,
+          "code_valid_rate": 0.0385
+        },
+        "checkpoint": {
+          "eval_loss": 1.8114,
+          "perplexity": 6.1187,
+          "rouge_l_f1": 0.1183,
+          "token_f1": 0.1997,
+          "code_valid_rate": 0.6538
+        }
+      },
+      "delta": {
+        "eval_loss": -0.7709,
+        "perplexity": -7.1089,
+        "perplexity_ratio": 0.4626,
+        "rouge_l_f1": 0.0097,
+        "token_f1": -0.0166,
+        "code_valid_rate": 0.6153
+      }
+    },
+    {
+      "label": "layer_lora checkpoint-2750",
+      "method": "layer_lora",
+      "adapter": "outputs/sft-layer-lora/checkpoint-2750",
+      "results": {
+        "base": {
+          "eval_loss": 2.5823,
+          "perplexity": 13.2276,
+          "rouge_l_f1": 0.1086,
+          "token_f1": 0.2163,
+          "code_valid_rate": 0.0385
+        },
+        "checkpoint": {
+          "eval_loss": 1.2613,
+          "perplexity": 3.5300,
+          "rouge_l_f1": 0.1159,
+          "token_f1": 0.2284,
+          "code_valid_rate": 0.1538
+        }
+      },
+      "delta": {
+        "eval_loss": -1.3210,
+        "perplexity": -9.6976,
+        "perplexity_ratio": 0.2668,
+        "rouge_l_f1": 0.0073,
+        "token_f1": 0.0121,
+        "code_valid_rate": 0.1153
+      }
+    }
+  ]
+}
