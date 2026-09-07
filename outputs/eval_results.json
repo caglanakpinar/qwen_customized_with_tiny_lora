@@ -88,6 +88,45 @@
         "token_f1": 0.0121,
         "code_valid_rate": 0.1153
       }
+    },
+    {
+      "timestamp": "2026-09-07T07:41:12+00:00",
+      "label": "layer_lora checkpoint-3200",
+      "note": "Scored against a newer generated dataset version weighted toward code-generation tasks -- not the same eval split as runs 1-3, so its base row is not comparable to theirs.",
+      "method": "layer_lora",
+      "adapter": "outputs/sft-layer-lora/checkpoint-3200",
+      "base_model": "Qwen/Qwen2.5-0.5B-Instruct",
+      "config": "configs/sft_layer_lora.yaml",
+      "eval_dataset": "data/synthetic/dataset/sft_eval.jsonl",
+      "num_eval_samples": 500,
+      "max_seq_length": 1536,
+      "results": {
+        "base": {
+          "eval_loss": 2.4269227981567383,
+          "perplexity": 11.323982231605772,
+          "rouge_l_f1": 0.07550314771544177,
+          "token_f1": 0.17810130745298258,
+          "num_generation_samples": 30,
+          "code_valid_rate": 0.26666666666666666,
+          "num_code_samples": 30
+        },
+        "checkpoint": {
+          "eval_loss": 1.4073702096939087,
+          "perplexity": 4.0851980512460955,
+          "rouge_l_f1": 0.07684607967973454,
+          "token_f1": 0.18017028625156636,
+          "num_generation_samples": 30,
+          "code_valid_rate": 0.03333333333333333,
+          "num_code_samples": 30
+        }
+      },
+      "delta": {
+        "eval_loss": -1.0195525884628296,
+        "perplexity": -7.238784180359676,
+        "perplexity_ratio": 0.36075631060636193,
+        "rouge_l_f1": 0.0013429319642927762,
+        "token_f1": 0.0020689787985837815
+      }
     }
   ]
 }
