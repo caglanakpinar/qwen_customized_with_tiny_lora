@@ -284,25 +284,241 @@ fresh adapter.
 TinyLoRA checkpoints (`outputs/sft-ds-assistant/…`) are a different PEFT method and cannot be
 resumed here; that is reported the same way.
 
+## Shell scripts
+
+The `*.sh` files at the repo root are thin wrappers over the CLI above. Each one resolves the
+boring parts -- installing dependencies, downloading the dataset, finding the newest checkpoint --
+prints what it resolved, then execs `poetry run …`. They take **no positional arguments**:
+everything is set through environment variables, e.g. `CHECKPOINT=3200 bash eval.sh`.
+
+| Script | What it does | Runs |
+|---|---|---|
+| `install.sh` | Clone, install, fetch the dataset, start a TinyLoRA SFT run | `tiny-lora sft` |
+| `layer_lora_install.sh` | Same preamble, but trains a layer-scoped LoRA adapter | `layer_lora sft` |
+| `eval.sh` | Resolve a checkpoint of a run and score it against the base model | `tiny-lora eval` |
+| `chat.sh` | Terminal chat REPL against a trained adapter | `tiny-lora chat` |
+| `web.sh` | Browser chat UI against a trained adapter | `tiny-lora serve` |
+| `upload_to_hf.sh` | Push a checkpoint + regenerated model card to the Hugging Face Hub | `scripts/push_to_hub.py` |
+
+`data_generate.sh` and `data_generator_code_base.sh` build the training corpora and are documented
+in their own file headers.
+
+### `install.sh`: install and train (TinyLoRA)
+
+Clones the repo (or `git pull`s an existing checkout), installs Poetry and the dependencies with
+the `gdrive` extra, downloads/extracts the dataset zip named by the config's
+`data.gdrive.zip_file_id`, then starts SFT with `--no-quant`. The dataset is fetched *before* the
+model loads on purpose, so a bad `zip_file_id` fails in seconds rather than minutes into the run.
+
+```bash
+# one-liner on a fresh machine
+curl -fsSL https://raw.githubusercontent.com/caglanakpinar/qwen_customized_with_tiny_lora/main/install.sh | bash
+
+# from a copy of the file
+bash install.sh
+
+# install everything but stop before training -- it prints the command it skipped
+SKIP_TRAIN=1 bash install.sh
+
+# a different config and clone target
+CONFIG=configs/sft_ds_assistant_27B.yaml REPO_DIR=~/runs/tinylora bash install.sh
+```
+
+| Variable | Default | Description |
+|---|---|---|
+| `REPO_DIR` | `qwen_customized_with_tiny_lora` | Where to clone to; an existing checkout is pulled, not re-cloned. |
+| `CONFIG` | `configs/sft_ds_assistant.yaml` | Training config to run. |
+| `SKIP_TRAIN` | unset | `1` installs and prepares data, then stops before training. |
+
+### `layer_lora_install.sh`: install and train (layer-scoped LoRA)
+
+The `layer_lora` counterpart to `install.sh` -- same clone/install/dataset preamble, but it ends in
+`poetry run layer_lora sft`. Run from inside an existing checkout it detects that (by
+`pyproject.toml`'s `name = "tiny-lora"`) and stays put rather than cloning a second copy underneath
+itself.
+
+```bash
+# defaults: layer 21 alone, configs/sft_layer_lora.yaml
+bash layer_lora_install.sh
+
+# the last four layers, capped run
+LAYERS=20-23 MAX_STEPS=2000 bash layer_lora_install.sh
+
+# widen the adapter to the attention output projection too
+LAYERS=23 TARGET_MODULES="q_proj,k_proj,v_proj,o_proj" bash layer_lora_install.sh
+
+# continue from a finished adapter, into a fresh output dir
+INIT_CHECKPOINT=outputs/sft-layer-lora/adapter OUTPUT_DIR=outputs/sft-layer-lora-v2 \
+  bash layer_lora_install.sh
+```
+
+| Variable | Default | Description |
+|---|---|---|
+| `REPO_DIR` | `qwen_customized_with_tiny_lora` | Clone target; ignored when run from inside a checkout. |
+| `CONFIG` | `configs/sft_layer_lora.yaml` | Training config to run. |
+| `LAYERS` | `21` | Layers to adapt -- `21`, `20-23`, `0-3,11,20-23`. |
+| `TARGET_MODULES` | the config's list | Comma-separated projections adapted within those layers. |
+| `INIT_CHECKPOINT` | unset | Continue from a saved adapter -- a path, or `auto`. |
+| `OUTPUT_DIR` | the config's `output_dir` | Where checkpoints are written. |
+| `MAX_STEPS` / `LEARNING_RATE` / `MAX_SAMPLES` | the config's values | The usual training overrides. |
+| `SKIP_TRAIN` | unset | `1` installs and prepares data, then stops before training. |
+
+> **`INIT_CHECKPOINT` pointing inside `OUTPUT_DIR`** is supported, but set the config's
+> `save_total_limit` to `null` first -- otherwise checkpoint rotation would delete the weights the
+> run started from, and `layer_lora` refuses to start.
+
+### `eval.sh`: score a checkpoint against the base model
+
+Resolves a checkpoint, checks it really is an adapter dir (`adapter_config.json`), installs
+dependencies, then runs `tiny-lora eval`. Resolution order, most explicit first:
+
+1. `ADAPTER` -- a directory, used as given.
+2. `CHECKPOINT=N` -- `<output_dir>/checkpoint-N`. This is **not** a fallback: a missing checkpoint
+   is an error listing what is available, never a silent slide onto `adapter/`.
+3. Neither set -- `<output_dir>/adapter` if the run finished, else the newest `checkpoint-N/`.
+
+`<output_dir>` is read out of `CONFIG` itself, so the checkpoints, the eval split and the saved
+results all come from the same run.
+
+```bash
+bash eval.sh                                             # newest checkpoint (or final adapter)
+CHECKPOINT=5000 bash eval.sh                             # outputs/sft-ds-assistant/checkpoint-5000
+MAX_EVAL_SAMPLES=200 GENERATION_SAMPLES=0 bash eval.sh   # quick loss/perplexity-only pass
+NO_SAVE=1 bash eval.sh                                   # print without writing the JSON record
+```
+
+| Variable | Default | Description |
+|---|---|---|
+| `CONFIG` | `configs/sft_ds_assistant.yaml` | Config supplying the eval split and the run's `output_dir`. |
+| `CHECKPOINT` | unset | Checkpoint number to evaluate, resolved under `output_dir`. |
+| `ADAPTER` | unset | Adapter/checkpoint dir outright; wins over `CHECKPOINT`. |
+| `OUTPUT_DIR` | `training.output_dir` from `CONFIG` | Run dir holding `adapter/` and `checkpoint-N/`. |
+| `MAX_EVAL_SAMPLES` | the config's cap | Cap the eval split to this many rows. |
+| `GENERATION_SAMPLES` | `30` | Examples also scored by generating (ROUGE-L / token-F1 / code-valid-rate); `0` skips them. |
+| `MAX_NEW_TOKENS` | `256` | Tokens per generated reply. |
+| `EVALS_DIR` | `<adapter>/evals/` | Where the JSON record is written. |
+| `NO_SAVE` | unset | `1` prints the results without writing them to disk. |
+| `SKIP_INSTALL` | unset | `1` uses whatever is already installed instead of running `poetry install`. |
+
+#### Evaluating a `layer_lora` run
+
+`layer_lora` trains into its own `output_dir` (`outputs/sft-layer-lora`, not
+`outputs/sft-ds-assistant`), so evaluating one is a matter of pointing `CONFIG` at its config --
+the run dir, the checkpoint list and the eval split all follow from that one file:
+
+```bash
+# newest checkpoint under outputs/sft-layer-lora (or its adapter/ once the run finishes)
+CONFIG=configs/sft_layer_lora.yaml bash eval.sh
+
+# a specific step -> outputs/sft-layer-lora/checkpoint-3200
+CONFIG=configs/sft_layer_lora.yaml CHECKPOINT=3200 bash eval.sh
+
+# cheap pass: cap the split, skip the generation metrics, write nothing
+CONFIG=configs/sft_layer_lora.yaml CHECKPOINT=3200 \
+  MAX_EVAL_SAMPLES=200 GENERATION_SAMPLES=0 NO_SAVE=1 bash eval.sh
+
+# an adapter dir from anywhere -- CONFIG is still what supplies the eval split
+CONFIG=configs/sft_layer_lora.yaml \
+  ADAPTER=outputs/sft-layer-lora/checkpoint-2750 bash eval.sh
+
+# deps already installed, results collected outside the checkpoint
+CONFIG=configs/sft_layer_lora.yaml CHECKPOINT=2750 \
+  SKIP_INSTALL=1 EVALS_DIR=outputs/evals/layer-lora bash eval.sh
+```
+
+The script always calls `tiny-lora eval`, for TinyLoRA and `layer_lora` checkpoints alike -- there
+is no `layer_lora eval`, and none is needed: `layer_lora` writes a standard PEFT adapter, and the
+base model id is read out of its `adapter_config.json` exactly the same way.
+
+### `chat.sh` / `web.sh`: talk to a trained adapter
+
+Both default to `outputs/sft-ds-assistant/adapter`, falling back to the newest `checkpoint-N/`
+under the same directory while a run is still in progress. `--no-quant` is on by default (4-bit
+loading is Linux/CUDA-only), and `--db-path` is passed only when that directory actually exists,
+so retrieval turns itself off rather than erroring when the knowledge base has not been built.
+
+```bash
+bash chat.sh                                          # terminal REPL
+bash web.sh                                           # browser UI on http://127.0.0.1:8000
+
+# a layer_lora checkpoint instead of the default TinyLoRA run
+ADAPTER=outputs/sft-layer-lora/checkpoint-3200 bash chat.sh
+
+# expose the UI on the LAN, with a persona
+HOST=0.0.0.0 PORT=8080 SYSTEM="You are a senior data scientist." bash web.sh
+```
+
+| Variable | Default | Description |
+|---|---|---|
+| `ADAPTER` | `outputs/sft-ds-assistant/adapter`, else the newest `checkpoint-N/` | Adapter or checkpoint dir to load. |
+| `MODEL` | read from the adapter | Base model override. |
+| `DB_PATH` | `data/data_science_dbs` | Knowledge base for retrieval; skipped when the dir is absent. |
+| `NO_QUANT` | `1` | `1` loads in bf16; any other value re-enables 4-bit quantization. |
+| `SYSTEM` | unset | System prompt prepended to the conversation. |
+| `HOST` / `PORT` | `127.0.0.1` / `8000` | `web.sh` only -- where the UI is served. |
+
+### `upload_to_hf.sh`: publish a checkpoint
+
+Interactive. It clears any stale `HF_TOKEN`/login, prompts for a **write** token and verifies it,
+collects release notes (empty line to finish; leave blank for the defaults), then uploads the
+checkpoint and a regenerated model card in one commit via
+[`scripts/push_to_hub.py`](scripts/push_to_hub.py).
+
+```bash
+bash upload_to_hf.sh
+
+# a different checkpoint and repo, tagged as a release
+REPO_ID=your-user/your-adapter \
+  CHECKPOINT_DIR=outputs/sft-layer-lora/checkpoint-3200 \
+  TAG=v0.3 bash upload_to_hf.sh
+```
+
+| Variable | Default | Description |
+|---|---|---|
+| `REPO_ID` | `Caglana/qwen0.5b-tinylora-ds-assistant` | Target Hub repo. |
+| `CHECKPOINT_DIR` | `outputs/sft-ds-assistant/checkpoint-12000` | Local checkpoint to push. |
+| `TAG` | unset | Tag/revision name created for this commit. |
+
 ## Benchmark Results
 
-Three adapter runs evaluated against the same base model and eval split
-raw numbers in [`outputs/eval_results.json`](outputs/eval_results.json):
+Four adapter runs evaluated against the base model, raw numbers in
+[`outputs/eval_results.json`](outputs/eval_results.json). Runs 1-3 and run 4 do **not** share an
+eval split: run 4 (`checkpoint-3200`) was scored after a newer generated dataset version — weighted
+toward code-generation tasks — was added, with different `num_eval_samples`/generation settings too
+(500 rows for run 4, an unrecorded count for 1-3). So each group is scored against its own base row —
+compare within a group, not across:
 
 | Run | eval_loss | perplexity | rouge_l_f1 | token_f1 | code_valid_rate |
 |---|---|---|---|---|---|
-| base (all three rows below) | 2.5823 | 13.2276 | 0.1086 | 0.2163 | 0.0385 |
+| base (runs 1-3) | 2.5823 | 13.2276 | 0.1086 | 0.2163 | 0.0385 |
 | 1. tiny_lora `checkpoint-5750` (run 1) | 1.8519 | 6.3720 | 0.0988 | 0.1629 | 0.2308 |
 | 2. tiny_lora `checkpoint-5750` (run 2) | **1.8114** | **6.1187** | 0.1183 | 0.1997 | 0.6538 |
 | 3. layer_lora `checkpoint-2750` | **1.2613** | **3.5300** | **0.1159** | **0.2284** | 0.1538 |
+| base (run 4) | 2.4269 | 11.3240 | 0.0755 | 0.1781 | 0.2667 |
+| 4. layer_lora `checkpoint-3200` | **1.4074** | **4.0852** | 0.0768 | 0.1802 | 0.0333 |
 
 ### Interpretation
 
-- **Teacher-forced loss/perplexity favor layer_lora.** `layer_lora` at step 2750 roughly halves the
-  base model's eval loss (2.58 → 1.26, perplexity 13.2 → 3.5) and clears both tiny_lora runs by a
-  wide margin, despite training for fewer steps. Adapting full LoRA matrices on the last few
-  transformer layers gives the model more effective capacity than TinyLoRA's shared low-dimensional
-  `v` vector, and that shows up directly in next-token prediction.
+- **Teacher-forced loss/perplexity favor layer_lora.** Both layer_lora checkpoints roughly halve to
+  a third of the base model's eval loss (2.58 → 1.26 at step 2750, 2.43 → 1.41 at step 3200) and
+  clear both tiny_lora runs by a wide margin. Adapting full LoRA matrices on the last few transformer
+  layers gives the model more effective capacity than TinyLoRA's shared low-dimensional `v` vector,
+  and that shows up directly in next-token prediction.
+- **layer_lora's loss ticked back up between step 2750 and step 3200** (1.26 → 1.41) even though 3200
+  is the later checkpoint — read this alongside the caveat above, since the two evals used different
+  `num_eval_samples`, not as confirmed regression-with-more-training on its own.
+- **`code_valid_rate` at checkpoint-3200 drops well below its own base (0.033 vs 0.267)** — the
+  checkpoint produces parseable Python less often than the un-adapted model, on the same eval call.
+  That's the opposite direction from every other run here, where the checkpoint's code-valid rate
+  rose over its base. Part of this is a harder yardstick, not just the checkpoint: this eval ran
+  against the newer, code-generation-weighted dataset version, so the base model's own code_valid_rate
+  jumped too (0.267 here vs 0.039 for runs 1-3) — the new split has more/harder code tasks to get
+  right, base included. That said, only the *checkpoint* got worse relative to its base, so it isn't
+  purely the harder split; combined with the loss upturn, step 3200 still looks like it has started
+  overfitting away from code-formatting conventions past step 2750. `checkpoint-2750` remains the
+  better layer_lora checkpoint to ship, but a same-split, same-conditions re-eval of both checkpoints
+  against the new code-generation dataset would confirm it rather than mixing old- and new-split
+  numbers as done here.
 - **tiny_lora's two runs at the identical checkpoint disagree sharply on `code_valid_rate`** (0.23 vs
   0.65) while eval_loss/perplexity barely move (1.85 vs 1.81) and ROUGE-L/token-F1 are close. Since
   generation is greedy (deterministic) and both runs read the same `checkpoint-5750` weights, the gap
@@ -312,21 +528,32 @@ raw numbers in [`outputs/eval_results.json`](outputs/eval_results.json):
   run 2's `code_valid_rate` as the more reliable of the pair only if you can confirm it was captured
   after such a fix — otherwise the two rows are evidence the metric is noisy at this sample size
   rather than evidence the checkpoint improved.
-- **ROUGE-L / token-F1 barely separate the three checkpoints** (0.10–0.12 and 0.16–0.23
-  respectively) — all three are still far from fluent instruction-following at this model size and
+- **ROUGE-L / token-F1 barely separate any of the four checkpoints** (0.08–0.12 and 0.16–0.23
+  respectively) — all are still far from fluent instruction-following at this model size and
   training budget, so free-generation text overlap is a weak discriminator here compared to
   teacher-forced loss.
 - **Net takeaway:** for this dataset and model size, restricting a full-rank LoRA to a handful of
   late transformer layers (`layer_lora`) recovered more quality per training step than TinyLoRA's
-  extreme parameter budget did in these runs. That is a specific-to-this-setup result, not a general
-  claim about TinyLoRA — see the [TinyLoRA paper](https://arxiv.org/abs/2602.04118) for the regime
-  (larger models, GRPO/RL) where its parameter efficiency is shown to pay off.
+  extreme parameter budget did in these runs, but layer_lora's own `code_valid_rate` is not
+  monotonic with more steps — checkpoint selection should watch it, not just eval_loss. This is a
+  specific-to-this-setup result, not a general claim about TinyLoRA — see the
+  [TinyLoRA paper](https://arxiv.org/abs/2602.04118) for the regime (larger models, GRPO/RL) where
+  its parameter efficiency is shown to pay off.
 
 ## Project Structure
 
 ```
 llm_with_tiny_lora/
 ├── pyproject.toml          # Poetry dependencies
+├── install.sh              # clone + install + start a TinyLoRA SFT run -- see "Shell scripts"
+├── layer_lora_install.sh   # the same, ending in a layer-scoped LoRA run
+├── eval.sh                 # base-vs-checkpoint eval for any run (CONFIG picks which)
+├── chat.sh / web.sh        # terminal REPL / browser UI against a trained adapter
+├── upload_to_hf.sh         # push a checkpoint + model card to the Hugging Face Hub
+├── data_generate.sh        # build the synthetic data-science set
+├── data_generator_code_base.sh  # build the Kaggle-grounded code corpus
+├── scripts/
+│   └── push_to_hub.py          # Hub upload + model-card generation, driven by upload_to_hf.sh
 ├── configs/
 │   ├── sft_default.yaml        # SFT defaults (gsm8k)
 │   ├── grpo_default.yaml       # GRPO defaults (gsm8k)
