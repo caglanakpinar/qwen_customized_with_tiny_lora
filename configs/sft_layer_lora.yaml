@@ -66,13 +66,13 @@ data:
   max_samples: 50000            # cap on training rows read from the glob
   max_eval_samples: 500         # eval runs every eval_steps and scores this whole split each time
   gdrive:
-    zip_file_id: 1WmtVMi3c1HrTpMzMLOL6Drxqz8QfGwjD
+    zip_file_id: 1Jp4n1bKu-YZWf7g3q_lgu0gRxmIuDcWF
     cache_dir: "data/synthetic/dataset"
 
 training:
   output_dir: "outputs/sft-layer-lora"   # keep separate from the TinyLoRA run's checkpoints
   num_train_epochs: 1          # max_steps overrides this
-  max_steps: 7000
+  max_steps: 232000
   per_device_train_batch_size: 8   # sequences per forward/backward pass, per device
   per_device_eval_batch_size: 8    # sequences per eval batch, per device
   gradient_accumulation_steps: 4   # effective batch size = train_batch_size * this
