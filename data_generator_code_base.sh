@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 #
 # Build the Kaggle-grounded code corpus: real open datasets, real schemas, and the source code of
-# a solution as the answer. Five topics per problem -- problem framing, feature engineering, model
-# selection, hyperparameter tuning, evaluation.
+# a solution as the answer. Seven topics per problem -- problem framing, feature engineering, model
+# selection, hyperparameter tuning and evaluation as full-length projects, plus short quick recipes
+# and SQL queries against the same columns (added to fix the terse-prompt and SQL failures the
+# published adapter showed under scripts/test_hf_model.py).
 #
 #     bash data_generator_code_base.sh                  # check, then write the whole catalogue
 #     LIST=1 bash data_generator_code_base.sh           # show the 24 problems and exit
