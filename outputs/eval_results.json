@@ -16,7 +16,7 @@
         },
         "checkpoint": {
           "eval_loss": 1.8519,
-          "perplexity": 6.3720,
+          "perplexity": 6.372,
           "rouge_l_f1": 0.0988,
           "token_f1": 0.1629,
           "code_valid_rate": 0.2308
@@ -74,14 +74,14 @@
         },
         "checkpoint": {
           "eval_loss": 1.2613,
-          "perplexity": 3.5300,
+          "perplexity": 3.53,
           "rouge_l_f1": 0.1159,
           "token_f1": 0.2284,
           "code_valid_rate": 0.1538
         }
       },
       "delta": {
-        "eval_loss": -1.3210,
+        "eval_loss": -1.321,
         "perplexity": -9.6976,
         "perplexity_ratio": 0.2668,
         "rouge_l_f1": 0.0073,
@@ -126,6 +126,45 @@
         "perplexity_ratio": 0.36075631060636193,
         "rouge_l_f1": 0.0013429319642927762,
         "token_f1": 0.0020689787985837815
+      }
+    },
+    {
+      "timestamp": "2026-09-10T05:19:40+00:00",
+      "label": "layer_lora checkpoint-3200 (rescored)",
+      "note": "Same weights as the 2026-09-07 checkpoint-3200 entry, rescored on a rebuilt eval split -- the base row moved from 2.4269 to 2.6143, which is only possible if the data changed, since the base model is frozen. Compare to that entry through the base-relative deltas, never row against row. code_valid_rate denominators are 26 (3/26 base, 5/26 checkpoint), derived from the reported rates.",
+      "method": "layer_lora",
+      "adapter": "outputs/sft-layer-lora/checkpoint-3200",
+      "base_model": "Qwen/Qwen2.5-0.5B-Instruct",
+      "config": "configs/sft_layer_lora.yaml",
+      "eval_dataset": "data/synthetic/dataset/sft_eval.jsonl",
+      "max_seq_length": 1536,
+      "results": {
+        "base": {
+          "eval_loss": 2.6143,
+          "perplexity": 13.657,
+          "rouge_l_f1": 0.1109,
+          "token_f1": 0.223,
+          "num_generation_samples": 30,
+          "code_valid_rate": 0.1154,
+          "num_code_samples": 26
+        },
+        "checkpoint": {
+          "eval_loss": 1.3067,
+          "perplexity": 3.6939,
+          "rouge_l_f1": 0.1184,
+          "token_f1": 0.2361,
+          "num_generation_samples": 30,
+          "code_valid_rate": 0.1923,
+          "num_code_samples": 26
+        }
+      },
+      "delta": {
+        "eval_loss": -1.3076,
+        "perplexity": -9.9631,
+        "perplexity_ratio": 0.2705,
+        "rouge_l_f1": 0.0075,
+        "token_f1": 0.0131,
+        "code_valid_rate": 0.0769
       }
     }
   ]
