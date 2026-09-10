@@ -130,10 +130,10 @@
     },
     {
       "timestamp": "2026-09-10T05:19:40+00:00",
-      "label": "layer_lora checkpoint-3200 (rescored)",
-      "note": "Same weights as the 2026-09-07 checkpoint-3200 entry, rescored on a rebuilt eval split -- the base row moved from 2.4269 to 2.6143, which is only possible if the data changed, since the base model is frozen. Compare to that entry through the base-relative deltas, never row against row. code_valid_rate denominators are 26 (3/26 base, 5/26 checkpoint), derived from the reported rates.",
+      "label": "layer_lora checkpoint-7550",
+      "note": "A later checkpoint continued from checkpoint-3200, scored on a rebuilt eval split -- the base row moved from 2.4269 to 2.6143, which is only possible if the data changed, since the base model is frozen. Both the weights and the split differ from the checkpoint-3200 entry, so the two are comparable only through their base-relative deltas, and neither variable can be isolated from these rows alone. Step 7550 is past this config's max_steps of 7000, so the run was continued or the cap was raised. outputs/sft-layer-lora/checkpoint-7550/ on this machine holds only a PEFT stub README.md -- no adapter weights, config or trainer_state -- so nothing here was verified against the checkpoint itself. code_valid_rate denominators are 26 (3/26 base, 5/26 checkpoint), derived from the reported rates.",
       "method": "layer_lora",
-      "adapter": "outputs/sft-layer-lora/checkpoint-3200",
+      "adapter": "outputs/sft-layer-lora/checkpoint-7550",
       "base_model": "Qwen/Qwen2.5-0.5B-Instruct",
       "config": "configs/sft_layer_lora.yaml",
       "eval_dataset": "data/synthetic/dataset/sft_eval.jsonl",
