@@ -481,12 +481,14 @@ REPO_ID=your-user/your-adapter \
 
 ## Benchmark Results
 
-Four adapter runs evaluated against the base model, raw numbers in
-[`outputs/eval_results.json`](outputs/eval_results.json). Runs 1-3 and run 4 do **not** share an
-eval split: run 4 (`checkpoint-3200`) was scored after a newer generated dataset version — weighted
+Five adapter runs evaluated against the base model, raw numbers in
+[`outputs/eval_results.json`](outputs/eval_results.json). The three groups do **not** share an eval
+split: run 4 (`checkpoint-3200`) was scored after a newer generated dataset version — weighted
 toward code-generation tasks — was added, with different `num_eval_samples`/generation settings too
-(500 rows for run 4, an unrecorded count for 1-3). So each group is scored against its own base row —
-compare within a group, not across:
+(500 rows for run 4, an unrecorded count for 1-3), and run 5 (`checkpoint-7500`, continued from
+`checkpoint-3200`) was scored against a rebuilt split again. The base model is frozen, so a base
+row that moves is proof the data moved. Each group is scored against its own base row — compare
+within a group, not across:
 
 | Run | eval_loss | perplexity | rouge_l_f1 | token_f1 | code_valid_rate |
 |---|---|---|---|---|---|
@@ -496,12 +498,14 @@ compare within a group, not across:
 | 3. layer_lora `checkpoint-2750` | **1.2613** | **3.5300** | **0.1159** | **0.2284** | 0.1538 |
 | base (run 4) | 2.4269 | 11.3240 | 0.0755 | 0.1781 | 0.2667 |
 | 4. layer_lora `checkpoint-3200` | **1.4074** | **4.0852** | 0.0768 | 0.1802 | 0.0333 |
+| base (run 5) | 2.6143 | 13.6570 | 0.1109 | 0.2230 | 0.1154 |
+| 5. layer_lora `checkpoint-7500` | **1.3067** | **3.6939** | **0.1184** | **0.2361** | 0.1923 |
 
 ### Interpretation
 
-- **Teacher-forced loss/perplexity favor layer_lora.** Both layer_lora checkpoints roughly halve to
-  a third of the base model's eval loss (2.58 → 1.26 at step 2750, 2.43 → 1.41 at step 3200) and
-  clear both tiny_lora runs by a wide margin. Adapting full LoRA matrices on the last few transformer
+- **Teacher-forced loss/perplexity favor layer_lora.** All three layer_lora checkpoints roughly
+  halve to a third of the base model's eval loss (2.58 → 1.26 at step 2750, 2.43 → 1.41 at step
+  3200, 2.61 → 1.31 at step 7500) and clear both tiny_lora runs by a wide margin. Adapting full LoRA matrices on the last few transformer
   layers gives the model more effective capacity than TinyLoRA's shared low-dimensional `v` vector,
   and that shows up directly in next-token prediction.
 - **layer_lora's loss ticked back up between step 2750 and step 3200** (1.26 → 1.41) even though 3200
@@ -518,7 +522,8 @@ compare within a group, not across:
   overfitting away from code-formatting conventions past step 2750. `checkpoint-2750` remains the
   better layer_lora checkpoint to ship, but a same-split, same-conditions re-eval of both checkpoints
   against the new code-generation dataset would confirm it rather than mixing old- and new-split
-  numbers as done here.
+  numbers as done here. **Run 5 (step 7500) no longer shows that collapse** — though on a rebuilt
+  split again, so it is not the controlled re-eval this bullet asked for; see below.
 - **tiny_lora's two runs at the identical checkpoint disagree sharply on `code_valid_rate`** (0.23 vs
   0.65) while eval_loss/perplexity barely move (1.85 vs 1.81) and ROUGE-L/token-F1 are close. Since
   generation is greedy (deterministic) and both runs read the same `checkpoint-5750` weights, the gap
@@ -528,14 +533,46 @@ compare within a group, not across:
   run 2's `code_valid_rate` as the more reliable of the pair only if you can confirm it was captured
   after such a fix — otherwise the two rows are evidence the metric is noisy at this sample size
   rather than evidence the checkpoint improved.
-- **ROUGE-L / token-F1 barely separate any of the four checkpoints** (0.08–0.12 and 0.16–0.23
+- **ROUGE-L / token-F1 barely separate any of the runs** (0.08–0.12 and 0.16–0.24
   respectively) — all are still far from fluent instruction-following at this model size and
   training budget, so free-generation text overlap is a weak discriminator here compared to
   teacher-forced loss.
+- **Run 5 moved two variables at once, so its gain is not yet attributable.** `checkpoint-7500`
+  continues training from `checkpoint-3200`, *and* its base row moved (2.4269 → 2.6143), so the
+  split changed too. Base-relative, the perplexity cut goes from 64% (11.32 → 4.09) to 73%
+  (13.66 → 3.69) and ROUGE-L/token-F1 from roughly flat (+0.001/+0.002) to slightly positive
+  (+0.008/+0.013). Directionally the best layer_lora result recorded — but how much is the longer
+  run (step 7500 at epoch 4.8, against step 3200 at epoch 2.0) and how much is the yardstick cannot
+  be separated from these rows. Worth knowing from its own `trainer_state`: `best_metric` 1.1515
+  lands at this very step with the early-stopping counter at 0, so against a `max_steps` of 232,000
+  the run had not plateaued when this checkpoint was written.
+- **The `code_valid_rate` collapse at step 3200 did not persist at 7500.** It scores 0.1154 → 0.1923,
+  i.e. *above* its base rather than far below it — the opposite sign from run 4, and the sign every
+  other run shows. Encouraging, and weaker evidence than it looks on two counts: the base model's own
+  code-valid rate fell from 0.267 to 0.115 across the two splits, and the rates are 3/26 and 5/26
+  correct, whose Wilson 95% intervals ([4.0%, 29.0%] and [8.5%, 37.9%]) overlap almost entirely.
+  A two-example difference cannot carry the claim in either direction — which also means step 3200's
+  dramatic drop was never solid evidence of overfitting. The 100-case smoke test
+  ([`scripts/test_hf_model.py`](scripts/test_hf_model.py)) is the better instrument: 80 code prompts
+  against the published adapter returned 24% valid code, tighter than anything a 26-sample rate can
+  say and consistent with run 5's 19.2%.
+- **Watch the base row for split drift.** Between runs 4 and 5 the base model got *worse*
+  (2.4269 → 2.6143) while the adapter got *better* (1.4074 → 1.3067). A gap widening from both ends
+  is what an eval split drifting toward the fine-tune's own distribution looks like. If a rebuilt
+  `sft_eval.jsonl` was generated from a corpus whose generators changed, part of that 73% is the
+  yardstick moving, not the model reaching further — so treat cross-split perplexity cuts as
+  directional, and re-derive a baseline whenever the split is rebuilt.
+- **What would settle it**, neither step requiring a retrain: score `checkpoint-7500` on run 4's
+  split (or `checkpoint-3200` on run 5's), which puts one ruler under both and separates the extra
+  training from the split; and re-run the 100-case smoke test against 7500, where 80 code prompts
+  can support a claim about code validity that 26 cannot.
 - **Net takeaway:** for this dataset and model size, restricting a full-rank LoRA to a handful of
   late transformer layers (`layer_lora`) recovered more quality per training step than TinyLoRA's
-  extreme parameter budget did in these runs, but layer_lora's own `code_valid_rate` is not
-  monotonic with more steps — checkpoint selection should watch it, not just eval_loss. This is a
+  extreme parameter budget did in these runs, and step 7500 is the strongest of the three on its
+  own base row. `code_valid_rate` looked non-monotonic with more steps, then reversed sign again at
+  7500, so at 26 generation samples that metric is too noisy to select checkpoints on — select on
+  eval_loss, and confirm code behaviour on the 100-case smoke test rather than on the eval's
+  code-valid rate. This is a
   specific-to-this-setup result, not a general claim about TinyLoRA — see the
   [TinyLoRA paper](https://arxiv.org/abs/2602.04118) for the regime (larger models, GRPO/RL) where
   its parameter efficiency is shown to pay off.
@@ -635,96 +672,6 @@ data:
 
 Requires the `gdrive` extra (`poetry install -E gdrive`). `dataset_name`/`eval_dataset_name` still
 point at the paths the zip extracts to — once downloaded, it's read exactly like a local dataset.
-
-## Open-source LLMs
-
-Nothing in the pipeline is Qwen-specific. The base model goes through `AutoModelForCausalLM`, so
-any causal LM on the Hub works — swap one line:
-
-```yaml
-model:
-  model_name_or_path: "meta-llama/Llama-3.2-3B-Instruct"
-```
-
-Four things have to line up:
-
-| Requirement | Why | Applies to |
-|---|---|---|
-| ships a **chat template** | the training set is `messages` conversations, rendered by `tokenizer.apply_chat_template` | every run |
-| reports `num_hidden_layers` | layer indices are validated before any weights load | `layer_lora` |
-| `target_modules` names match the architecture | PEFT matches modules by name — a name nothing matches trains nothing, silently | every run |
-| `layers_pattern` matches the layer container | it is the path segment before the layer index | `layer_lora` |
-
-The chat template is the one that catches people out: use the **`-Instruct` / `-it` / `-chat`**
-variant. Base (pretrain) checkpoints usually ship no template, and `apply_chat_template` raises.
-
-### Drop-in
-
-Llama-style naming — `q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj` with
-`layers_pattern: layers`. Nothing to change but `model_name_or_path`.
-
-| Family | Example ids | Notes |
-|---|---|---|
-| Qwen 2.5 / 3 | `Qwen/Qwen2.5-1.5B-Instruct`, `Qwen/Qwen2.5-7B-Instruct`, `Qwen/Qwen3-1.7B`, `Qwen/Qwen3-8B` | what this repo ships with |
-| Llama 3.x | `meta-llama/Llama-3.2-1B-Instruct`, `meta-llama/Llama-3.2-3B-Instruct`, `meta-llama/Llama-3.1-8B-Instruct` | gated — accept the licence, then `hf auth login` |
-| Gemma 2 / 3 | `google/gemma-2-2b-it`, `google/gemma-3-4b-it` | gated |
-| Mistral | `mistralai/Mistral-7B-Instruct-v0.3` | |
-| SmolLM2 | `HuggingFaceTB/SmolLM2-360M-Instruct`, `HuggingFaceTB/SmolLM2-1.7B-Instruct` | smallest sensible swap; 360M trains on a laptop |
-| OLMo 2 | `allenai/OLMo-2-1124-7B-Instruct` | fully open weights *and* data |
-| Granite 3 | `ibm-granite/granite-3.1-2b-instruct` | |
-| TinyLlama | `TinyLlama/TinyLlama-1.1B-Chat-v1.0` | |
-| DeepSeek-R1 distills | `deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B` | Qwen2/Llama architecture underneath |
-
-### Needs different names
-
-| Family | `target_modules` | `layers_pattern` | Why |
-|---|---|---|---|
-| Phi-3 / 3.5 | `qkv_proj, o_proj, gate_up_proj, down_proj` | `layers` | QKV and gate/up are **fused** — `q_proj` matches nothing |
-| StarCoder2 | `q_proj, k_proj, v_proj, o_proj, c_fc, c_proj` | `layers` | GPT-style MLP names |
-| Mixtral | `q_proj, k_proj, v_proj, o_proj` | `layers` | attention only; the MoE experts are not separate `Linear`s |
-| Falcon | `query_key_value, dense, dense_h_to_4h, dense_4h_to_h` | `h` | fused QKV, and the stack is `transformer.h.N` |
-| GPT-NeoX | `query_key_value, dense, dense_h_to_4h, dense_4h_to_h` | `layers` | fused QKV |
-| MPT | `Wqkv, out_proj, up_proj, down_proj` | `blocks` | the stack is `transformer.blocks.N` |
-
-### Reading the names off a model
-
-For anything not listed, ask the model directly rather than guessing:
-
-```bash
-poetry run python -c "
-import torch
-from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
-mid = 'Qwen/Qwen2.5-0.5B-Instruct'
-print('arch:', AutoConfig.from_pretrained(mid).model_type,
-      '| layers:', AutoConfig.from_pretrained(mid).num_hidden_layers)
-m = AutoModelForCausalLM.from_pretrained(mid, torch_dtype='auto')
-print('target_modules:', sorted({n.rsplit(\".\",1)[-1] for n, x in m.named_modules()
-                                 if isinstance(x, torch.nn.Linear)} - {'lm_head'}))
-print('layer 0 path:', next(n for n, _ in m.named_modules() if n.endswith('.0')))
-print('chat template:', 'yes' if AutoTokenizer.from_pretrained(mid).chat_template else 'NO')
-"
-```
-
-```
-arch: qwen2 | layers: 24
-target_modules: ['down_proj', 'gate_proj', 'k_proj', 'o_proj', 'q_proj', 'up_proj', 'v_proj']
-layer 0 path: model.layers.0        # -> layers_pattern: "layers"
-chat template: yes
-```
-
-### What does not carry over
-
-**Adapters are tied to the base model they were trained on.** `outputs/sft-ds-assistant/`'s
-checkpoints only load against `Qwen/Qwen2.5-0.5B-Instruct` — the shapes, the layer count and, for
-TinyLoRA, the SVD of each frozen weight all come from that model. Switching models means training
-from scratch, not re-pointing `init_from_checkpoint`. Give the new run its own `output_dir`.
-
-Two smaller consequences:
-
-- **TinyLoRA takes an SVD of every target module at load time.** It is a one-time cost, but on a
-  7B model with seven target modules it is minutes, not seconds.
-- `chat`, `serve` and `eval` need no change — they read the base model id out of the adapter's own
-  `adapter_config.json`.
 
 ## References
 
