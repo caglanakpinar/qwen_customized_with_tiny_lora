@@ -23,7 +23,9 @@ Checks, in order (each one prints PASS/FAIL and the run exits non-zero if any fa
                     block that parses -- reported as rates per category, checked against
                     --min-answer-rate / --min-code-rate
     adapter_effect  the adapter changes the output: a sample of prompts is re-generated with the
-                    adapter disabled and the replies must differ somewhere
+                    adapter disabled and the replies must differ somewhere -- with --json, each
+                    sampled case's record carries both the fine-tuned reply ("reply") and this
+                    base-model reply ("base_reply"); cases outside the sample keep "base_reply": null
 
 Nothing here reads the local `outputs/` tree -- that is the point. It tests the published artifact.
 A full 100-case run generates 100 replies (plus the comparison sample), so on CPU/MPS it is minutes,
@@ -476,6 +478,7 @@ def check_generation(
             "labelled_fence": False,
             "code_valid": False,
             "reply": reply,
+            "base_reply": None,
         }
         if prompt.expects_code and reply:
             code, labelled = _extract_code(reply, prompt.code_lang)
@@ -561,6 +564,7 @@ def check_adapter_effect(
     for record in sample:
         with model.disable_adapter():
             base_reply = _generate(model, tokenizer, device, record["question"], max_new_tokens)
+        record["base_reply"] = base_reply
         question = record["question"]
         label = question if len(question) <= 62 else question[:59] + "..."
         if base_reply.strip() != record["reply"].strip():
