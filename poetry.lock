@@ -51,7 +51,7 @@ name = "agent-builder"
 version = "0.1.0"
 description = ""
 optional = false
-python-versions = ">=3.10,<4.0"
+python-versions = "^3.10"
 groups = ["main"]
 files = []
 develop = false
@@ -89,8 +89,8 @@ weaviate = ["weaviate-client (>=4.22.0,<5.0.0)"]
 [package.source]
 type = "git"
 url = "https://github.com/caglanakpinar/agentic_ai_builder.git"
-reference = "main"
-resolved_reference = "7260242acb5b616fd0ac344f2c93feb5a2919097"
+reference = "HEAD"
+resolved_reference = "42724aa747fe1423dad999c41faf01a4f1966a2b"
 
 [[package]]
 name = "aiohappyeyeballs"
@@ -1733,10 +1733,9 @@ files = []
 develop = false
 
 [package.dependencies]
-agent-builder = {git = "https://github.com/caglanakpinar/agentic_ai_builder.git", branch = "main"}
+agent-builder = {git = "https://github.com/caglanakpinar/agentic_ai_builder.git"}
 click = "^8.4.2"
 httpx = "^0.28"
-peft = ">=0.17"
 
 [package.extras]
 all = ["numpy (>=1.24)", "openpyxl (>=3.1)", "pyarrow (>=12.0)", "scikit-learn (>=1.3)"]
@@ -1749,7 +1748,7 @@ selection = ["numpy (>=1.24)", "scikit-learn (>=1.3)"]
 type = "git"
 url = "https://github.com/caglanakpinar/feature-store-agent.git"
 reference = "HEAD"
-resolved_reference = "cfe3c9a23542cf2323ba0cb226bd8a6a99302a84"
+resolved_reference = "bec4e947fa3d96fdd9e96dd7df8a3bb98ad88c26"
 
 [[package]]
 name = "filelock"
