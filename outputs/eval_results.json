@@ -166,6 +166,37 @@
         "token_f1": 0.0131,
         "code_valid_rate": 0.0769
       }
+    },
+    {
+      "label": "layer_lora checkpoint-16000",
+      "note": "Recorded from the printed eval.sh table only, not the raw eval JSON, so num_eval_samples/num_code_samples for this run are unknown. base row (2.3818) matches neither run 4's (2.4269) nor run 5's (2.6143), so this is a fourth split/condition group, comparable only to its own base row. code_valid_rate is 0.0000 for both base and checkpoint; without the sample count this cannot be told apart from 'the generation subset had no code-task references' vs 'both models failed every code sample present' -- either way, base and checkpoint tie, so it is not evidence of a checkpoint regression at code.",
+      "method": "layer_lora",
+      "adapter": "outputs/sft-layer-lora/checkpoint-16000",
+      "config": "configs/sft_layer_lora.yaml",
+      "results": {
+        "base": {
+          "eval_loss": 2.3818,
+          "perplexity": 10.8249,
+          "rouge_l_f1": 0.196,
+          "token_f1": 0.2812,
+          "code_valid_rate": 0.0
+        },
+        "checkpoint": {
+          "eval_loss": 0.5837,
+          "perplexity": 1.7926,
+          "rouge_l_f1": 0.2069,
+          "token_f1": 0.2853,
+          "code_valid_rate": 0.0
+        }
+      },
+      "delta": {
+        "eval_loss": -1.7981,
+        "perplexity": -9.0323,
+        "perplexity_ratio": 0.1656,
+        "rouge_l_f1": 0.0109,
+        "token_f1": 0.0041,
+        "code_valid_rate": 0.0
+      }
     }
   ]
 }
