@@ -15,6 +15,7 @@
 #     NO_STORES        set to 1 to skip the Chroma/FAISS build       (default: unset)
 #     STORES_ONLY      set to 1 to rebuild only Chroma/FAISS         (default: unset -- leaves the JSONL alone)
 #     EVAL_RECORDS     held-out eval record count                   (default: 4000)
+#     SHARD_MB         shard size in MB                              (default: 256)
 #     SEED             random seed                                   (default: 42)
 
 set -euo pipefail
@@ -32,6 +33,7 @@ args=(-m data.synthetic.build --target-gb "$TARGET_GB" --formats "$FORMATS" --re
 [ -n "${OUT_DIR:-}" ] && args+=(--out-dir "$OUT_DIR")
 [ -n "${GDRIVE_FILE_ID:-}" ] && args+=(--gdrive-file-id "$GDRIVE_FILE_ID")
 [ -n "${EVAL_RECORDS:-}" ] && args+=(--eval-records "$EVAL_RECORDS")
+[ -n "${SHARD_MB:-}" ] && args+=(--shard-mb "$SHARD_MB")
 [ -n "${SEED:-}" ] && args+=(--seed "$SEED")
 [ "${FRESH:-}" = "1" ] && args+=(--fresh)
 [ "${ZIP:-}" = "1" ] && args+=(--zip)

@@ -7,6 +7,12 @@
 # to invent a dataset, answering without a tool when none is needed, asking for a missing argument,
 # declining what no tool can do, and answering a follow-up from the last result.
 #
+# Plus the edge-case shapes, which are the hard ones: a call that *succeeds* and returns something
+# broken. A profile reporting dtype "object" for a column of money is a successful result and a
+# wrong answer, and nothing in the payload says "problem". Those shapes are dirty_data (a sentinel,
+# a string-typed number, a dtype that will not support the question asked) and misnamed_column (the
+# user names a column the dataset does not have, close to one it does).
+#
 # Written in Qwen2.5's native <tool_call> / <tool_response> format as plain {role, content}
 # messages, so it trains on its own or in the same glob as the other two corpora.
 #
@@ -32,10 +38,15 @@
 #     SHOW            N to print N conversations per shape      (default: unset)
 #     NO_KB           1 to skip the knowledge-base shapes       (default: unset -- reads the Chroma stores)
 #
-# VARIANTS is the volume knob, not TARGET_MB. The corpus is finite -- 2,575 conversation templates
-# per variant, roughly 8.6 MB -- so TARGET_MB only caps a run early; it cannot produce more than the
-# catalogue holds. VARIANTS=16 is ~140 MB, VARIANTS=32 ~270 MB. Past that, records repeat with
-# nothing new but random values and tool orderings, so prefer widening the generator to padding it.
+# VARIANTS is the volume knob, not TARGET_MB. The corpus is finite -- 3,019 conversation templates
+# per variant (2,259 with --no-kb), roughly 7.5 MB -- so TARGET_MB only caps a run early; it cannot
+# produce more than the catalogue holds. VARIANTS=16 is ~120 MB, VARIANTS=32 ~240 MB, VARIANTS=256
+# ~1.9 GB. Past roughly 64, records repeat with nothing new but random values, lead-in phrasing and
+# tool orderings, so prefer widening the generator to padding it.
+#
+# The lead-in bank was widened to 43 entries (data/synthetic/edge_cases.py EDGE_TEXT), which is what
+# makes the higher variant counts less degenerate than they used to be: with ten lead-ins, anything
+# past variant ten was re-rolling numbers under a phrasing it had already used.
 #
 # The check validates every call against its tool's JSON schema. When the tokenizer loads, it also
 # renders a sample through the real chat template both ways -- the flat messages the trainer sees,

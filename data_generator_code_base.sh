@@ -1,10 +1,16 @@
 #!/usr/bin/env bash
 #
 # Build the Kaggle-grounded code corpus: real open datasets, real schemas, and the source code of
-# a solution as the answer. Seven topics per problem -- problem framing, feature engineering, model
+# a solution as the answer. Eight topics per problem -- problem framing, feature engineering, model
 # selection, hyperparameter tuning and evaluation as full-length projects, plus short quick recipes
 # and SQL queries against the same columns (added to fix the terse-prompt and SQL failures the
-# published adapter showed under scripts/test_hf_model.py).
+# published adapter showed under scripts/test_hf_model.py), plus edge cases.
+#
+# The edge-case topic is written against what these files actually get wrong -- telco_churn's
+# TotalCharges holding a single space, adult_income spelling missing as '?', pima_diabetes
+# recording an unmeasured reading as 0 -- carried on each Problem as na_markers, zero_is_missing,
+# leaks and quirks. One task per problem also draws from data/synthetic/edge_cases.py, the shared
+# pool of broken columns, so the corpus covers damage these 24 files happen not to contain.
 #
 #     bash data_generator_code_base.sh                  # check, then write the whole catalogue
 #     LIST=1 bash data_generator_code_base.sh           # show the 24 problems and exit

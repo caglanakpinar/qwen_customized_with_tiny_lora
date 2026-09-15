@@ -1,0 +1,206 @@
+# Layer expansion, WIDE: add one transformer block that is wider than the base model's and
+# fine-tune only that block, on top of the merged TinyLoRA + layer_lora weights
+# (see layer_expand.base_adapters below).
+#
+# The block is 1536 wide, wrapped in 896 -> 1536 -> 896 projections so it plugs into the base
+# model's residual stream: 46.2M parameters, ~3x what a block shaped like the base model's own
+# layers would carry.
+#
+# This is not adapter fine-tuning. There is no rank, no alpha, no target_modules -- a new block
+# has no existing projection to adapt. Every one of its 46.2M parameters trains densely.
+#
+# WHAT THE EXTRA WIDTH COSTS
+#
+# Qwen2Config carries a single scalar hidden_size for the whole stack, so a block wider than its
+# neighbours cannot be described in config.json. The result is therefore NOT loadable by a stock
+# AutoModelForCausalLM.from_pretrained, and not convertible to GGUF as-is. Concretely:
+#
+#   * Load it through layer_expand, which rebuilds the stack from the layer_expand.json sidecar
+#     written next to the weights. `tiny-lora chat|serve|chat-api|eval --adapter <dir>` detect
+#     that sidecar and do this automatically -- as do chat.sh, web.sh and eval.sh via ADAPTER.
+#   * The saved config.json is retyped `model_type: layer_expand` so that a stock loader raises
+#     "Transformers does not recognize this architecture" rather than silently reinitialising
+#     the new block and handing back a model that loads fine and produces garbage.
+#   * The sidecar must travel with the weights. It is copied into model/ and into every
+#     checkpoint-N/, so copy the whole directory rather than just the safetensors.
+#
+# If any of that matters more than the capacity, drop back to a base-width block by setting
+# hidden_size/intermediate_size/num_attention_heads below to null -- that result is a stock
+# 25-layer Qwen2 (14.9M new params). Two base-width blocks (`--layers 24-25`, 29.8M params)
+# also stay fully standard and are a better use of the same budget on a ~50k-sample dataset.
+#
+# Build the dataset first (or leave data.reader: "gdrive" below):
+#     bash data_generate.sh
+#
+# Then:
+#     poetry run layer_expand sft --config configs/sft_layer_expand.yaml --no-quant
+#
+# or, since this is the default config, just:
+#     poetry run layer_expand sft --no-quant
+#     bash layer_expand_install.sh
+#
+# The shape can be overridden per-run without editing this file:
+#     poetry run layer_expand sft --hidden-size 2048 --num-attention-heads 32 \
+#         --intermediate-size 11136 --no-quant
+
+model:
+  model_name_or_path: "Qwen/Qwen2.5-0.5B-Instruct"  # base model pulled from the Hugging Face Hub
+  load_in_4bit: false          # full bf16; `--no-quant` forces this off regardless
+  torch_dtype: "auto"          # let transformers pick the dtype the checkpoint was saved in
+  trust_remote_code: false     # Qwen2.5 ships standard modeling code; no custom code needed
+  attn_implementation: null    # let transformers pick (e.g. sdpa); set "flash_attention_2" where supported
+
+layer_expand:
+  # Positions the new blocks take in the *final* stack, 0-based. Qwen2.5-0.5B-Instruct has 24
+  # layers (0-23), so `[24]` appends one to the end and gives a 25-layer model. `[24, 25]` adds
+  # two. An index inside the existing range inserts there instead and shifts the rest down.
+  #
+  # Appending is much the cheapest option, and not by a small margin: with every earlier layer
+  # frozen, the backward pass stops at the new block and never enters the stack below it.
+  # Inserting at, say, 12 means backpropagating through layers 13-23 to reach it.
+  layers: [24]
+
+  # Shape of the new block. null on all four inherits the base model's shape, which is the only
+  # setting that leaves the result a stock 25-layer Qwen2 -- loadable by AutoModelForCausalLM,
+  # exportable to GGUF, needing nothing from this package to read back.
+  #
+  # Setting hidden_size builds a *wrapped* block (896 -> hidden_size -> 896 projections around
+  # it) and writes a layer_expand.json sidecar the loader needs, because Qwen2Config has a
+  # single scalar hidden_size/intermediate_size for the whole stack and cannot describe a block
+  # shaped differently from its neighbours.
+  #
+  # Reference points for Qwen2.5-0.5B (hidden 896, mlp 4864, 14 heads, 2 KV heads, head_dim 64):
+  #   all null                                 ->  14.9M new params  (+3.0% of 494M), stock-loadable
+  #   intermediate_size: 16384                 ->  45.9M             (+9.3%), unwrapped
+  #   hidden_size: 1536, heads 24, mlp 8320    ->  46.2M             (+9.4%), WRAPPED  <- set here
+  #   hidden_size: 2048, heads 32, mlp 11136   ->  81.0M            (+16.4%), WRAPPED
+  # Only a hidden_size change wraps the block. Widening the MLP alone leaves its input and
+  # output at 896, so it plugs straight into the residual stream with no projections.
+  #
+  # 1536 = 24 heads x head_dim 64. hidden_size must equal num_attention_heads * 64, and head_dim
+  # itself is fixed at the base model's 64 because the rotary tables and the KV cache are shared
+  # across the stack -- so widen by raising num_attention_heads, never head_dim.
+  #
+  # num_key_value_heads stays at the base model's 2, which keeps every layer's KV cache entry
+  # the same (batch, 2, seq, 64) shape. That is why inference memory barely moves: 1.01 GiB of
+  # weights and an unchanged cache, ~1.41 GiB even at 32k context.
+  #
+  # 8320 = 1536 * 5.42, matching Qwen2.5-0.5B's own 4864/896 MLP ratio.
+  hidden_size: 1536
+  intermediate_size: 8320
+  num_attention_heads: 24
+  num_key_value_heads: null
+
+  # "identity" zeroes the new block's output projections (o_proj, down_proj, and the wrapper's
+  # out_proj), so both residual branches contribute exactly zero and the block passes its input
+  # through untouched. The expanded model's first forward pass is therefore identical to the
+  # base model's, and training learns a delta from a working starting point.
+  #
+  # This matters more than it sounds: a randomly initialised block sitting directly in front of
+  # lm_head destroys the output, and the run spends its early steps repairing damage it caused
+  # itself. "random" exists to demonstrate that.
+  init: "identity"
+  init_std: 0.02               # std of the normal init applied before the output zeroing
+
+  # Where the *frozen* part of the model comes from: adapters merged into the base weights, in
+  # this order, before the new block is added. A chain rather than one entry, because no single
+  # adapter in this repo holds the whole model:
+  #
+  #   outputs/sft-ds-assistant   TinyLoRA, all 24 layers, all 7 projections   (672 tensors)
+  #   outputs/sft-layer-lora     LoRA, layer 21 only, q/k/v                   (6 tensors)
+  #
+  # Listing only the layer_lora run would leave layers 0-20 and 22-23 at the STOCK
+  # Qwen2.5-0.5B weights and discard everything the TinyLoRA run learned -- layer_lora's
+  # adapter literally contains 6 tensors, all of them layer 21's. With both listed, the frozen
+  # stack is base + TinyLoRA(all layers) + LoRA(layer 21), and the new block trains on that.
+  #
+  # Each entry is either an adapter directory (one holding adapter_config.json) or the run
+  # directory containing one, in which case the latest weights are taken -- the finished
+  # `adapter/` if there is one, else the highest `checkpoint-N`. Both spellings are needed here:
+  # sft-ds-assistant has an adapter/, sft-layer-lora has only checkpoint-N.
+  #
+  # Merged, not attached: they fold into the frozen weights and do not train here. An empty
+  # list expands the stock base model. Order is broadest first, most specific last -- each
+  # adapter is merged on top of the previous one's result.
+  #
+  # Caveat: both were trained against the stock base rather than against each other, so
+  # stacking them is an approximation -- the layer-21 delta was learned assuming stock weights
+  # underneath and here lands on TinyLoRA-modified ones. Normal practice for composing
+  # adapters, but it is why the order matters.
+  base_adapters:
+    - "outputs/sft-ds-assistant"
+    - "outputs/sft-layer-lora"
+
+  # Where the *expanded* model's weights come from:
+  #   "auto"   -- continue from <training.output_dir>/model if a previous run finished one,
+  #               otherwise build a fresh block. This is what makes re-running this config
+  #               extend the previous run rather than restart it.
+  #   null     -- always build a fresh block
+  #   <path>   -- continue from that expanded model directory
+  #
+  # "auto" deliberately ignores checkpoint-N in output_dir. A run interrupted partway is
+  # restored by the Trainer itself, which brings optimizer state, LR schedule position and step
+  # count with it -- strictly better than reloading the weights alone. So an interrupted run
+  # resumes properly whatever this is set to; this setting is about *finished* runs.
+  init_from_checkpoint: "auto"
+
+data:
+  # "local" reads dataset_name/eval_dataset_name straight off disk. "gdrive" first downloads
+  # a zip from Google Drive into gdrive.cache_dir and extracts it there, then reads the same
+  # paths -- so once downloaded, both readers behave identically.
+  reader: "gdrive"
+  dataset_name: "data/synthetic/dataset/sft_train-*.jsonl"   # training shards
+  eval_dataset_name: "data/synthetic/dataset/sft_eval.jsonl" # held-out split, enables eval loss
+  max_samples: 50000            # cap on training rows read from the glob
+  max_eval_samples: 500         # eval runs every eval_steps and scores this whole split each time
+  gdrive:
+    zip_file_id: 1Jp4n1bKu-YZWf7g3q_lgu0gRxmIuDcWF
+    cache_dir: "data/synthetic/dataset"
+
+training:
+  output_dir: "outputs/sft-layer-expand-wide"  # kept separate from the layer_lora run's checkpoints
+  num_train_epochs: 1          # max_steps overrides this
+  max_steps: 20000
+  # Peak memory here is dominated by the logits, not by the new block: 151,936 vocab x ~10
+  # bytes per token (bf16 logits, the fp32 upcast inside ForCausalLMLoss, and its gradient)
+  # is ~1.4MB per token, against ~50KB per token of block activations. Budget roughly:
+  #   batch 1 x 1536 -> ~4.0GB    batch 4 x 1536 -> ~11.1GB
+  #   batch 2 x 1536 -> ~6.4GB    batch 8 x 1536 -> ~20.7GB
+  # The wide block adds only ~1.0GB static and ~0.5GB of activations at batch 8 over a
+  # base-width one -- tripling the block's parameters is nearly free here, because the vocab
+  # dominates. Drop this to 2 on a 16GB card and raise gradient_accumulation_steps to match.
+  #
+  # Disk, though, is not free: the Trainer saves the whole 540M-parameter model on every save,
+  # so each checkpoint-N is ~1.1GB. save_steps 250 with save_total_limit 5 keeps that to ~5.4GB.
+  per_device_train_batch_size: 8
+  per_device_eval_batch_size: 8
+  gradient_accumulation_steps: 4   # effective batch size = train_batch_size * this
+  # A new block trains 46.2M real parameters from an identity init, not a handful of low-rank
+  # scalars, so it wants a far lower LR than the adapter runs and a longer warmup. Starting from
+  # identity means the first steps are moving out_proj off exactly zero, and a wider block
+  # reaches a given output magnitude with smaller per-weight steps -- so 7.0e-5 rather than the
+  # ~1.0e-4 a base-width block would take.
+  # NB: needs the decimal point -- PyYAML parses "7e-5" (no ".") as a string, not a float.
+  learning_rate: 7.0e-5
+  lr_scheduler_type: "cosine"
+  warmup_steps: 300            # longer than the narrow run's: more parameters leaving zero at once
+  max_grad_norm: 1.0
+  weight_decay: 0.0
+  adam_beta2: 0.999
+  max_seq_length: 1536
+  logging_steps: 10
+  eval_steps: 50               # how often (in steps) eval loss is computed
+  save_steps: 250              # must stay a round multiple of eval_steps when early_stopping is on
+  save_total_limit: 5          # keep only the most recent few; the best one is exempt
+  bf16: true
+  # Off on purpose. Every layer before the new block is frozen, so those layers store no
+  # activations to recompute -- checkpointing would pay the recompute for memory that was never
+  # allocated. Lower per_device_train_batch_size instead.
+  gradient_checkpointing: false
+  report_to: "none"
+  # 46.2M trainable parameters against a ~50k-sample dataset is roughly 1.7 tokens per parameter
+  # -- a base-width block would see ~5. Overfitting is the binding constraint on a block this
+  # size long before compute is, so this is not optional here.
+  early_stopping: true
+  early_stopping_patience: 5
+  early_stopping_threshold: 0.0
