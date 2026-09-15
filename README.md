@@ -300,8 +300,10 @@ everything is set through environment variables, e.g. `CHECKPOINT=3200 bash eval
 | `web.sh` | Browser chat UI against a trained adapter | `tiny-lora serve` |
 | `upload_to_hf.sh` | Push a checkpoint + regenerated model card to the Hugging Face Hub | `scripts/push_to_hub.py` |
 
-`data_generate.sh` and `data_generator_code_base.sh` build the training corpora and are documented
-in their own file headers.
+`data_generate.sh`, `data_generator_code_base.sh` and `data_generator_tool_use_call.sh` build the
+training corpora and are documented in their own file headers. The last one writes tool-use
+conversations (tool calls, tool results, and answers grounded in them) in Qwen2.5's native
+`<tool_call>` format to `data/synthetic/dataset_tool_use/`.
 
 ### `install.sh`: install and train (TinyLoRA)
 
@@ -481,14 +483,15 @@ REPO_ID=your-user/your-adapter \
 
 ## Benchmark Results
 
-Five adapter runs evaluated against the base model, raw numbers in
-[`outputs/eval_results.json`](outputs/eval_results.json). The three groups do **not** share an eval
-split: run 4 (`checkpoint-3200`) was scored after a newer generated dataset version — weighted
+Six adapter runs evaluated against the base model, raw numbers in
+[`outputs/eval_results.json`](outputs/eval_results.json). The four groups below do **not** share an
+eval split: run 4 (`checkpoint-3200`) was scored after a newer generated dataset version — weighted
 toward code-generation tasks — was added, with different `num_eval_samples`/generation settings too
-(500 rows for run 4, an unrecorded count for 1-3), and run 5 (`checkpoint-7500`, continued from
-`checkpoint-3200`) was scored against a rebuilt split again. The base model is frozen, so a base
-row that moves is proof the data moved. Each group is scored against its own base row — compare
-within a group, not across:
+(500 rows for run 4, an unrecorded count for 1-3); run 5 (`checkpoint-7500`, continued from
+`checkpoint-3200`) was scored against a rebuilt split again; and run 6 (`checkpoint-16000`) again
+lands on a base row that matches neither. The base model is frozen, so a base row that moves is
+proof the data moved. Each group is scored against its own base row — compare within a group, not
+across:
 
 | Run | eval_loss | perplexity | rouge_l_f1 | token_f1 | code_valid_rate |
 |---|---|---|---|---|---|
@@ -500,14 +503,25 @@ within a group, not across:
 | 4. layer_lora `checkpoint-3200` | **1.4074** | **4.0852** | 0.0768 | 0.1802 | 0.0333 |
 | base (run 5) | 2.6143 | 13.6570 | 0.1109 | 0.2230 | 0.1154 |
 | 5. layer_lora `checkpoint-7500` | **1.3067** | **3.6939** | **0.1184** | **0.2361** | 0.1923 |
+| base (run 6) | 2.3818 | 10.8249 | 0.1960 | 0.2812 | 0.0000 |
+| 6. layer_lora `checkpoint-16000` | **0.5837** | **1.7926** | **0.2069** | **0.2853** | 0.0000 |
 
 ### Interpretation
 
-- **Teacher-forced loss/perplexity favor layer_lora.** All three layer_lora checkpoints roughly
-  halve to a third of the base model's eval loss (2.58 → 1.26 at step 2750, 2.43 → 1.41 at step
-  3200, 2.61 → 1.31 at step 7500) and clear both tiny_lora runs by a wide margin. Adapting full LoRA matrices on the last few transformer
-  layers gives the model more effective capacity than TinyLoRA's shared low-dimensional `v` vector,
-  and that shows up directly in next-token prediction.
+- **Teacher-forced loss/perplexity favor layer_lora.** All four layer_lora checkpoints roughly
+  halve to a fifth of the base model's eval loss (2.58 → 1.26 at step 2750, 2.43 → 1.41 at step
+  3200, 2.61 → 1.31 at step 7500, 2.38 → 0.58 at step 16000) and clear both tiny_lora runs by a wide
+  margin. Adapting full LoRA matrices on the last few transformer layers gives the model more
+  effective capacity than TinyLoRA's shared low-dimensional `v` vector, and that shows up directly
+  in next-token prediction.
+- **Step 16000's eval_loss (0.58, perplexity 1.79) is an outlier worth double-checking, not just
+  celebrating.** It's a much bigger jump than any earlier checkpoint made relative to its own base,
+  and a perplexity under 2 means the model is very nearly reproducing the reference tokens verbatim.
+  That's consistent with a model that has genuinely converged well on this task, but it's the same
+  signature you'd see from eval/train overlap or an eval split that has drifted toward what the
+  model was trained on — both plausible here given the base row has moved in every group so far.
+  Before treating 16000 as the best checkpoint, worth confirming `sft_eval.jsonl` at this point in
+  time has zero row overlap with the training shards.
 - **layer_lora's loss ticked back up between step 2750 and step 3200** (1.26 → 1.41) even though 3200
   is the later checkpoint — read this alongside the caveat above, since the two evals used different
   `num_eval_samples`, not as confirmed regression-with-more-training on its own.
@@ -561,17 +575,31 @@ within a group, not across:
   is what an eval split drifting toward the fine-tune's own distribution looks like. If a rebuilt
   `sft_eval.jsonl` was generated from a corpus whose generators changed, part of that 73% is the
   yardstick moving, not the model reaching further — so treat cross-split perplexity cuts as
-  directional, and re-derive a baseline whenever the split is rebuilt.
-- **What would settle it**, neither step requiring a retrain: score `checkpoint-7500` on run 4's
-  split (or `checkpoint-3200` on run 5's), which puts one ruler under both and separates the extra
-  training from the split; and re-run the 100-case smoke test against 7500, where 80 code prompts
-  can support a claim about code validity that 26 cannot.
+  directional, and re-derive a baseline whenever the split is rebuilt. Run 6's base row (2.3818)
+  moved *again*, to a value that matches none of the prior three (2.5823 / 2.4269 / 2.6143) — a
+  fourth split/condition in six runs, so the same caveat applies with extra force to its 0.58
+  eval_loss above.
+- **`code_valid_rate` ties at 0.0000 for run 6 (base and checkpoint alike).** Only the printed
+  `eval.sh` table was available for this run, not the raw JSON, so the code-sample count and
+  denominator behind that 0.0000 aren't known — it could mean the 30-sample generation subset
+  happened to contain no code-task references at all, or that both models produced zero valid Python
+  where code *was* asked for. Either reading ties base and checkpoint, so — like step 3200's opposite
+  extreme — it's not evidence of a regression, just another data point for why `code_valid_rate` at
+  this sample size shouldn't drive checkpoint selection (see the smoke-test point above).
+- **What would settle it**, none requiring a retrain: score `checkpoint-7500` and `checkpoint-16000`
+  both on run 4's split (or `checkpoint-3200`/`-7500` on run 6's), which puts one ruler under all
+  three and separates the extra training from the split; re-run the 100-case smoke test against 7500
+  and 16000, where 80 code prompts can support a claim about code validity that 26-30 cannot; and
+  check `checkpoint-16000`'s training shards against the current `sft_eval.jsonl` for row overlap
+  before trusting its 0.58 eval_loss at face value.
 - **Net takeaway:** for this dataset and model size, restricting a full-rank LoRA to a handful of
   late transformer layers (`layer_lora`) recovered more quality per training step than TinyLoRA's
-  extreme parameter budget did in these runs, and step 7500 is the strongest of the three on its
-  own base row. `code_valid_rate` looked non-monotonic with more steps, then reversed sign again at
-  7500, so at 26 generation samples that metric is too noisy to select checkpoints on — select on
-  eval_loss, and confirm code behaviour on the 100-case smoke test rather than on the eval's
+  extreme parameter budget did in these runs, and step 16000 is the strongest of the four on its own
+  base row — provisionally, pending the leakage check above, since its jump is larger than the trend
+  from the earlier three checkpoints would predict. `code_valid_rate` looked non-monotonic with more
+  steps, reversed sign at 7500, then tied at zero for 16000, so at 26-30 generation samples that
+  metric is too noisy to select checkpoints on — select on eval_loss (once verified clean of split
+  overlap), and confirm code behaviour on the 100-case smoke test rather than on the eval's
   code-valid rate. This is a
   specific-to-this-setup result, not a general claim about TinyLoRA — see the
   [TinyLoRA paper](https://arxiv.org/abs/2602.04118) for the regime (larger models, GRPO/RL) where
