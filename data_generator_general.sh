@@ -93,6 +93,21 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
+# ---------------------------------------------------------------------------
+# Precondition: the generator package has to be present.
+#
+# Checked here rather than left to the three sub-scripts, so a 21 GB plan is not printed -- and an
+# hour of the first stage not spent -- before the run discovers it cannot generate anything.
+# `data/` is gitignored (line 1 of .gitignore): it is in no commit and on no remote, so a missing
+# one cannot be restored with git and has to be copied back from another working tree.
+# ---------------------------------------------------------------------------
+if [ ! -d "data/synthetic" ]; then
+  echo "==> missing data/synthetic/ -- the generator package this script drives" >&2
+  echo "    data/ is gitignored, so it is in no commit and on no remote. git cannot restore it;" >&2
+  echo "    copy it back from another working tree, then re-run." >&2
+  exit 1
+fi
+
 OUT_DIR="${OUT_DIR:-/Volumes/PS2000W/ds-assistant}"
 TARGET_GB="${TARGET_GB:-21}"
 SHARES="${SHARES:-1,1,1}"

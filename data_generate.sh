@@ -20,6 +20,24 @@
 
 set -euo pipefail
 
+# ---------------------------------------------------------------------------
+# Precondition: the generator package has to be present.
+#
+# `data/` is gitignored (line 1 of .gitignore), so it lives only in a working tree -- it is in no
+# commit and on no remote. It did not survive the repository re-arrange, and `git checkout` cannot
+# bring it back. Without this check the run prints "Building..." and then dies several lines later
+# on a bare `ModuleNotFoundError: No module named 'data'`, which reads like a broken virtualenv
+# rather than a missing directory.
+# ---------------------------------------------------------------------------
+if [ ! -f "data/synthetic/build.py" ]; then
+  echo "==> missing data/synthetic/build.py" >&2
+  echo "    This script drives the generator package under data/synthetic/, which is not in this" >&2
+  echo "    working tree. data/ is gitignored, so it is in no commit and on no remote and cannot" >&2
+  echo "    be restored with git -- it has to be copied back from another working tree or" >&2
+  echo "    regenerated before any of the data_generator_*.sh scripts will run." >&2
+  exit 1
+fi
+
 TARGET_GB="${TARGET_GB:-5.0}"
 FORMATS="${FORMATS:-sft}"
 READER="${READER:-local}"

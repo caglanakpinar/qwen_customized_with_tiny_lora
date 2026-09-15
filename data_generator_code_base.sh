@@ -18,7 +18,7 @@
 #     DOWNLOAD=1 bash data_generator_code_base.sh       # also fetch the datasets themselves
 #
 # Environment overrides:
-#     OUT_DIR         where the dataset is written        (default: /Volumes/PS2000W/ds_assistant)
+#     OUT_DIR         where the dataset is written        (default: /Volumes/PS2000W/ds-assistant)
 #     FORMATS         comma-separated: sft, grpo          (default: sft)
 #     TARGET_MB       stop after roughly this many MB     (default: 0 -- write everything)
 #     EVAL_RECORDS    held-out eval record count          (default: 500)
@@ -38,8 +38,26 @@
 
 set -euo pipefail
 
+# ---------------------------------------------------------------------------
+# Precondition: the generator package has to be present.
+#
+# `data/` is gitignored (line 1 of .gitignore), so it lives only in a working tree -- it is in no
+# commit and on no remote. It did not survive the repository re-arrange, and `git checkout` cannot
+# bring it back. Without this check the run prints "Building..." and then dies several lines later
+# on a bare `ModuleNotFoundError: No module named 'data'`, which reads like a broken virtualenv
+# rather than a missing directory.
+# ---------------------------------------------------------------------------
+if [ ! -f "data/synthetic/data_generator_code_base.py" ]; then
+  echo "==> missing data/synthetic/data_generator_code_base.py" >&2
+  echo "    This script drives the generator package under data/synthetic/, which is not in this" >&2
+  echo "    working tree. data/ is gitignored, so it is in no commit and on no remote and cannot" >&2
+  echo "    be restored with git -- it has to be copied back from another working tree or" >&2
+  echo "    regenerated before any of the data_generator_*.sh scripts will run." >&2
+  exit 1
+fi
+
 MODULE="data.synthetic.data_generator_code_base"
-OUT_DIR="${OUT_DIR:-/Volumes/PS2000W/ds_assistant}"
+OUT_DIR="${OUT_DIR:-/Volumes/PS2000W/ds-assistant}"
 FORMATS="${FORMATS:-sft}"
 TARGET_MB="${TARGET_MB:-0}"
 EVAL_RECORDS="${EVAL_RECORDS:-500}"
