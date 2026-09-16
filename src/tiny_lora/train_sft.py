@@ -26,6 +26,7 @@ from tiny_lora.config import (
     load_yaml_config,
 )
 from tiny_lora.data import prepare_sft_dataset, prepare_sft_eval_dataset
+from tiny_lora.gdrive import download_and_extract_zip, flatten_single_wrapper_dir
 from tiny_lora.model import load_tinylora_model, load_tokenizer
 
 
@@ -56,13 +57,14 @@ _CHECKPOINT_WEIGHT_FILES = (
 )
 
 
-def resolve_resume_checkpoint(output_dir: Path) -> str | None:
-    """Return the last checkpoint in `output_dir` to resume from, or None to train from scratch.
+def _last_valid_checkpoint(output_dir: Path) -> str | None:
+    """The checkpoint-with-weights check `resolve_resume_checkpoint` runs, factored out so it can
+    be re-run against a freshly-downloaded outputs cache without re-triggering the download.
 
     `get_last_checkpoint` matches on the `checkpoint-N` directory name alone, so a directory left
     behind by an interrupted or partially-deleted run still counts as the latest checkpoint -- and
     the trainer then refuses it with "Can't find a valid checkpoint at ...". Confirm the weights are
-    actually there and start from the beginning when they are not.
+    actually there and report nothing usable when they are not.
     """
     last_checkpoint = get_last_checkpoint(str(output_dir))
     if last_checkpoint is None:
@@ -72,8 +74,51 @@ def resolve_resume_checkpoint(output_dir: Path) -> str | None:
     if any((checkpoint_dir / name).is_file() for name in _CHECKPOINT_WEIGHT_FILES):
         return last_checkpoint
 
-    print(f"Ignoring {last_checkpoint}: no weights in it. Training from the beginning.")
+    print(f"Ignoring {last_checkpoint}: no weights in it.")
     return None
+
+
+def resolve_resume_checkpoint(
+    output_dir: Path,
+    gdrive_zip_file_id: str | None = None,
+    gdrive_cache_dir: str | Path | None = None,
+) -> str | None:
+    """Return the checkpoint to resume from, or None to train from scratch.
+
+    Tries `output_dir` first. If nothing usable is there and `gdrive_zip_file_id` is set,
+    downloads and extracts that zip into `gdrive_cache_dir` (defaulting to `output_dir` itself,
+    so the extracted `checkpoint-N` directories land exactly where the Trainer looks for them)
+    and checks again -- e.g. a fresh machine picking up a run that was checkpointed elsewhere.
+    Training starts from scratch only when neither source has a usable checkpoint. The download
+    is skipped if `gdrive_cache_dir` is already populated, so this only pays the download cost
+    once per cache dir.
+    """
+    last_checkpoint = _last_valid_checkpoint(output_dir)
+    if last_checkpoint is not None:
+        return last_checkpoint
+
+    if not gdrive_zip_file_id:
+        print(f"No checkpoint in {output_dir}. Training from the beginning.")
+        return None
+
+    cache_dir = Path(gdrive_cache_dir) if gdrive_cache_dir else output_dir
+    if cache_dir.is_dir() and any(cache_dir.iterdir()):
+        print(f"{cache_dir} is already populated; skipping the Google Drive download.")
+    else:
+        print(
+            f"No checkpoint in {output_dir}; downloading outputs from Google Drive "
+            f"({gdrive_zip_file_id}) into {cache_dir}."
+        )
+        download_and_extract_zip(cache_dir, gdrive_zip_file_id, "_gdrive_outputs.zip")
+        flatten_single_wrapper_dir(cache_dir)
+
+    last_checkpoint = _last_valid_checkpoint(cache_dir)
+    if last_checkpoint is None:
+        print(
+            f"No usable checkpoint in the downloaded outputs archive either ({cache_dir}). "
+            "Training from the beginning."
+        )
+    return last_checkpoint
 
 
 def run_sft_core(
@@ -199,7 +244,14 @@ def run_sft_core(
         processing_class=tokenizer,
         callbacks=callbacks,
     )
-    trainer.train(resume_from_checkpoint=resolve_resume_checkpoint(output_dir) if resume else None)
+    resume_from_checkpoint = (
+        resolve_resume_checkpoint(
+            output_dir, train_cfg.gdrive_zip_file_id, train_cfg.gdrive_cache_dir
+        )
+        if resume
+        else None
+    )
+    trainer.train(resume_from_checkpoint=resume_from_checkpoint)
     final_dir = output_dir / final_dir_name
     trainer.save_model(str(final_dir))
     tokenizer.save_pretrained(str(final_dir))

@@ -16,6 +16,7 @@ from tiny_lora.config import (
     ModelConfig,
     SFTTrainingConfig,
     _flatten_data_config,
+    _flatten_training_config,
     _merge_dataclass,
     load_yaml_config,
 )
@@ -31,7 +32,9 @@ def run_sft_from_yaml(config_path: str | Path, overrides: dict | None = None) ->
 
     model_cfg = _merge_dataclass(ModelConfig(), raw.get("model", {}))
     data_cfg = _merge_dataclass(DataConfig(), _flatten_data_config(raw.get("data", {})))
-    training_cfg = _merge_dataclass(SFTTrainingConfig(), raw.get("training", {}))
+    training_cfg = _merge_dataclass(
+        SFTTrainingConfig(), _flatten_training_config(raw.get("training", {}))
+    )
     lora_cfg = _merge_dataclass(StandardLoraConfig(), raw.get("standard_lora", {}))
 
     tokenizer = load_tokenizer(model_cfg.model_name_or_path, trust_remote_code=model_cfg.trust_remote_code)

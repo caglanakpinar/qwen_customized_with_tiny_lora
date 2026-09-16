@@ -154,11 +154,19 @@ data:
   max_samples: 50000            # cap on training rows read from the glob
   max_eval_samples: 500         # eval runs every eval_steps and scores this whole split each time
   gdrive:
-    zip_file_id: 172glQjuNb7mo0BXfbbZhLL1_c2EPD4ed
+    zip_file_id: 1dY0JgVBF0ZPMzZ7wYxxUW7a22A-fXZHa
     cache_dir: "data/synthetic/dataset"
 
 training:
   output_dir: "outputs/sft-layer-expand-wide"  # kept separate from the layer_lora run's checkpoints
+  # Resume order, checked in this sequence: (1) a checkpoint-N already in output_dir (an
+  # interrupted local run); (2) if none, and zip_file_id is set, download+extract that zip from
+  # Google Drive into cache_dir and look there instead -- e.g. picking up a run on a fresh
+  # machine; (3) if neither has a usable checkpoint, train from the beginning. Mirrors
+  # data.gdrive above, but for a zipped output_dir/checkpoint-N rather than a dataset.
+  gdrive:
+    zip_file_id: null            # set to the Drive file id of a zipped outputs/checkpoint-N
+    cache_dir: "outputs/sft-layer-expand-wide"  # same as output_dir, so the checkpoint lands where the Trainer looks for it
   num_train_epochs: 1          # max_steps overrides this
   max_steps: 20000
   # Peak memory here is dominated by the logits, not by the new block: 151,936 vocab x ~10

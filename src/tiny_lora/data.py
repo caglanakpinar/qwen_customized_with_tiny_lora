@@ -20,12 +20,12 @@ gigabytes and `load_dataset` would otherwise convert all of it to Arrow before s
 
 from __future__ import annotations
 
-import zipfile
 from pathlib import Path
 
 from datasets import Dataset, concatenate_datasets, load_dataset
 
 from tiny_lora.config import DataConfig
+from tiny_lora.gdrive import download_and_extract_zip
 
 LOCAL_SUFFIXES = {".json", ".jsonl"}
 
@@ -104,20 +104,7 @@ def ensure_gdrive_dataset(cache_dir: Path, zip_file_id: str | None) -> Path:
             "data.gdrive.zip_file_id must be set when data.reader is 'gdrive'."
         )
 
-    try:
-        import gdown
-    except ImportError as exc:
-        raise ImportError(
-            "Reading from Google Drive requires the 'gdown' package. "
-            "Install it with `poetry install -E gdrive`."
-        ) from exc
-
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    zip_path = cache_dir / "_gdrive_dataset.zip"
-    gdown.download(id=zip_file_id, output=str(zip_path), quiet=False)
-    with zipfile.ZipFile(zip_path) as archive:
-        archive.extractall(cache_dir)
-    zip_path.unlink()
+    download_and_extract_zip(cache_dir, zip_file_id, "_gdrive_dataset.zip")
     _flatten_dataset_dir(cache_dir)
     return cache_dir
 

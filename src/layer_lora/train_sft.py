@@ -27,6 +27,7 @@ from tiny_lora.config import (
     ModelConfig,
     SFTTrainingConfig,
     _flatten_data_config,
+    _flatten_training_config,
     _merge_dataclass,
     load_yaml_config,
 )
@@ -71,7 +72,9 @@ def run_sft_from_yaml(config_path: str | Path, overrides: dict | None = None) ->
 
     model_cfg = _merge_dataclass(ModelConfig(), raw.get("model", {}))
     data_cfg = _merge_dataclass(DataConfig(), _flatten_data_config(raw.get("data", {})))
-    training_cfg = _merge_dataclass(SFTTrainingConfig(), raw.get("training", {}))
+    training_cfg = _merge_dataclass(
+        SFTTrainingConfig(), _flatten_training_config(raw.get("training", {}))
+    )
     layer_cfg = _merge_dataclass(LayerLoraConfig(), raw.get("layer_lora", {}))
 
     _guard_checkpoint_rotation(layer_cfg, training_cfg)

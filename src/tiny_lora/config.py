@@ -111,6 +111,14 @@ class SFTTrainingConfig:
     # value: any eval_loss that is not strictly lower than the best seen so far counts as
     # non-improving.
     early_stopping_threshold: float = 0.0
+    # Google Drive file id (or full share URL) of a zipped output_dir/checkpoint-N to fall back
+    # to when output_dir has no usable checkpoint of its own -- e.g. a fresh machine picking up a
+    # run that was checkpointed elsewhere. Only consulted when local resume finds nothing; see
+    # `train_sft.resolve_resume_checkpoint`.
+    gdrive_zip_file_id: str | None = None
+    # Where the zip is extracted to. None defaults to output_dir itself, so the extracted
+    # checkpoint-N directories land exactly where the Trainer looks for them.
+    gdrive_cache_dir: str | None = None
 
 
 @dataclass
@@ -152,12 +160,22 @@ def load_yaml_config(path: str | Path) -> dict[str, Any]:
 
 
 def _flatten_data_config(raw: dict[str, Any]) -> dict[str, Any]:
-    """Flatten the `data.gdrive.*` yaml block into the `gdrive_*` DataConfig fields."""
+    """Flatten a `<section>.gdrive.*` yaml block into `gdrive_*` fields on that section.
+
+    Despite the name (kept for the existing `data.gdrive.*` callers), this flattens any
+    section's `gdrive` block the same way -- `training.gdrive.*` reuses it via the
+    `_flatten_training_config` alias below. `_merge_dataclass` drops any flattened key a given
+    dataclass doesn't declare, so applying it to a `training` block with no `gdrive_*` fields
+    (GRPO's) is harmless.
+    """
     flat = dict(raw)
     gdrive = flat.pop("gdrive", {}) or {}
     for key, value in gdrive.items():
         flat[f"gdrive_{key}"] = value
     return flat
+
+
+_flatten_training_config = _flatten_data_config
 
 
 def build_pipeline_config(
@@ -167,7 +185,7 @@ def build_pipeline_config(
     model = _merge_dataclass(ModelConfig(), raw.get("model", {}))
     tinylora = _merge_dataclass(TinyLoraConfig(), raw.get("tinylora", {}))
     data = _merge_dataclass(DataConfig(), _flatten_data_config(raw.get("data", {})))
-    training = _merge_dataclass(training_cls(), raw.get("training", {}))
+    training = _merge_dataclass(training_cls(), _flatten_training_config(raw.get("training", {})))
     return PipelineConfig(model=model, tinylora=tinylora, data=data, training=training)
 
 
