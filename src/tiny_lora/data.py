@@ -20,6 +20,7 @@ gigabytes and `load_dataset` would otherwise convert all of it to Arrow before s
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from datasets import Dataset, concatenate_datasets, load_dataset
@@ -66,11 +67,33 @@ def _resolve_data_files(name: str) -> list[str]:
     return [str(path)]
 
 
+def _load_jsonl_records(path: str) -> list[dict]:
+    with open(path) as f:
+        return [json.loads(line) for line in f if line.strip()]
+
+
+def _load_jsonl_dataset(data_files: list[str]) -> Dataset:
+    """Read one or more JSONL files into a single Dataset via plain `json.loads`.
+
+    `load_dataset("json", ...)` infers its Arrow schema per internal read chunk, so a file that
+    mixes message shapes -- e.g. plain role/content turns next to tool-call turns carrying an
+    extra `tool_calls` key -- can fail partway through with "Couldn't cast array of type ...
+    to ...", because the schema was already fixed from whichever chunk happened to be read
+    first. Building the table from one in-memory list instead makes pyarrow infer a single
+    schema over every row at once, unifying the key sets (a row missing a key gets null there)
+    rather than rejecting rows that don't match an earlier guess.
+    """
+    records: list[dict] = []
+    for path in data_files:
+        records.extend(_load_jsonl_records(path))
+    return Dataset.from_list(records)
+
+
 def _load_until(data_files: list[str], max_samples: int) -> Dataset:
     """Read shards in order until `max_samples` rows are available, then truncate."""
     loaded: Dataset | None = None
     for path in data_files:
-        shard = load_dataset("json", data_files=path, split="train")
+        shard = _load_jsonl_dataset([path])
         loaded = shard if loaded is None else concatenate_datasets([loaded, shard])
         if len(loaded) >= max_samples:
             break
@@ -173,7 +196,7 @@ def load_raw_dataset(data_cfg: DataConfig, dataset_name: str | None = None) -> D
         # multi-gigabyte glob to take 50k rows would rewrite the whole set into the cache first.
         if data_cfg.max_samples is not None and len(data_files) > 1:
             return _load_until(data_files, data_cfg.max_samples)
-        dataset = load_dataset("json", data_files=data_files, split="train")
+        dataset = _load_jsonl_dataset(data_files)
     else:
         kwargs: dict = {"path": name, "split": data_cfg.split}
         if data_cfg.dataset_config:
