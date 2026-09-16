@@ -90,8 +90,13 @@ def resolve_resume_checkpoint(
     so the extracted `checkpoint-N` directories land exactly where the Trainer looks for them)
     and checks again -- e.g. a fresh machine picking up a run that was checkpointed elsewhere.
     Training starts from scratch only when neither source has a usable checkpoint. The download
-    is skipped if `gdrive_cache_dir` is already populated, so this only pays the download cost
-    once per cache dir.
+    is skipped if `gdrive_cache_dir` already has a usable checkpoint of its own, so this only
+    pays the download cost once per cache dir.
+
+    The skip check looks for a checkpoint specifically, not just "cache_dir has files in it":
+    when `gdrive_cache_dir` defaults to `output_dir`, that directory already holds
+    pre-training artifacts by the time this runs -- `layer_expand`'s sidecar, for one -- so
+    "any file present" would skip the download before a checkpoint ever had a chance to land.
     """
     last_checkpoint = _last_valid_checkpoint(output_dir)
     if last_checkpoint is not None:
@@ -102,15 +107,17 @@ def resolve_resume_checkpoint(
         return None
 
     cache_dir = Path(gdrive_cache_dir) if gdrive_cache_dir else output_dir
-    if cache_dir.is_dir() and any(cache_dir.iterdir()):
-        print(f"{cache_dir} is already populated; skipping the Google Drive download.")
-    else:
-        print(
-            f"No checkpoint in {output_dir}; downloading outputs from Google Drive "
-            f"({gdrive_zip_file_id}) into {cache_dir}."
-        )
-        download_and_extract_zip(cache_dir, gdrive_zip_file_id, "_gdrive_outputs.zip")
-        flatten_single_wrapper_dir(cache_dir)
+    last_checkpoint = _last_valid_checkpoint(cache_dir)
+    if last_checkpoint is not None:
+        print(f"{cache_dir} already has a checkpoint; skipping the Google Drive download.")
+        return last_checkpoint
+
+    print(
+        f"No checkpoint in {output_dir}; downloading outputs from Google Drive "
+        f"({gdrive_zip_file_id}) into {cache_dir}."
+    )
+    download_and_extract_zip(cache_dir, gdrive_zip_file_id, "_gdrive_outputs.zip")
+    flatten_single_wrapper_dir(cache_dir)
 
     last_checkpoint = _last_valid_checkpoint(cache_dir)
     if last_checkpoint is None:
