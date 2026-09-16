@@ -7,6 +7,7 @@ from pathlib import Path
 
 import torch
 from transformers import EarlyStoppingCallback, TrainerCallback
+from transformers.trainer import TRAINER_STATE_NAME
 from transformers.trainer_utils import get_last_checkpoint
 from transformers.utils import (
     ADAPTER_SAFE_WEIGHTS_NAME,
@@ -58,24 +59,44 @@ _CHECKPOINT_WEIGHT_FILES = (
 
 
 def _last_valid_checkpoint(output_dir: Path) -> str | None:
-    """The checkpoint-with-weights check `resolve_resume_checkpoint` runs, factored out so it can
-    be re-run against a freshly-downloaded outputs cache without re-triggering the download.
+    """The checkpoint-with-weights-and-state check `resolve_resume_checkpoint` runs, factored out
+    so it can be re-run against a freshly-downloaded outputs cache without re-triggering the
+    download.
 
     `get_last_checkpoint` matches on the `checkpoint-N` directory name alone, so a directory left
-    behind by an interrupted or partially-deleted run still counts as the latest checkpoint -- and
-    the trainer then refuses it with "Can't find a valid checkpoint at ...". Confirm the weights are
-    actually there and report nothing usable when they are not.
+    behind by an interrupted or partially-deleted run still counts as the latest checkpoint.
+    Two things are confirmed before it is handed to the trainer:
+
+    * weights are actually there -- otherwise the trainer refuses it outright with "Can't find a
+      valid checkpoint at ...";
+    * `trainer_state.json` is there too -- `Trainer.train(resume_from_checkpoint=...)` reads it
+      unconditionally to restore step count, optimizer and LR-scheduler state, and raises
+      `FileNotFoundError` deep inside `.train()` if it is missing. A checkpoint zipped up by hand
+      (rather than by the Trainer itself) can easily drop it if only the weight files were
+      selected -- re-zip the whole `checkpoint-N` directory as the Trainer wrote it to fix that.
+
+    Reports nothing usable, rather than raising, when either is missing -- consistent with every
+    other "can't resume from this" case here, which falls back to the next source instead of
+    failing the run.
     """
     last_checkpoint = get_last_checkpoint(str(output_dir))
     if last_checkpoint is None:
         return None
 
     checkpoint_dir = Path(last_checkpoint)
-    if any((checkpoint_dir / name).is_file() for name in _CHECKPOINT_WEIGHT_FILES):
-        return last_checkpoint
+    if not any((checkpoint_dir / name).is_file() for name in _CHECKPOINT_WEIGHT_FILES):
+        print(f"Ignoring {last_checkpoint}: no weights in it.")
+        return None
 
-    print(f"Ignoring {last_checkpoint}: no weights in it.")
-    return None
+    if not (checkpoint_dir / TRAINER_STATE_NAME).is_file():
+        print(
+            f"Ignoring {last_checkpoint}: no {TRAINER_STATE_NAME} in it, so the Trainer can't "
+            "restore step/optimizer/scheduler state from it. If this came from a hand-made zip, "
+            "re-zip the whole checkpoint-N directory rather than a subset of its files."
+        )
+        return None
+
+    return last_checkpoint
 
 
 def resolve_resume_checkpoint(
