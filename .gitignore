@@ -5,4 +5,4 @@ Users/
 *.ipynb
 .ipynb_checkpoints/
 notebooks/
-mobile/
+outputs/sft-layer-expand-wide/
