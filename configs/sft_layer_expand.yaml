@@ -193,8 +193,22 @@ training:
   lr_scheduler_type: "cosine"
   warmup_steps: 300            # longer than the narrow run's: more parameters leaving zero at once
   max_grad_norm: 1.0
-  weight_decay: 0.0
+  # Unlike the narrow LoRA runs, most of this block's 46.2M parameters start away from zero
+  # (N(0, init_std), see layer_expand.init_std above) -- only the output projections start at
+  # exactly zero. So the "decay fights the only thing training is trying to move" reasoning
+  # behind this repo's usual weight_decay: 0.0 doesn't hold here; a small pull toward zero is a
+  # cheap regularizer against the overfitting risk called out above (1.7 tokens/param).
+  weight_decay: 0.02
   adam_beta2: 0.999
+  # Noise added to token embeddings during training only (no inference-time cost) so the model
+  # has to predict the same next token despite a perturbed input, instead of memorizing exact
+  # patterns -- a further hedge against the same overfitting risk, and empirically a hedge
+  # against degenerate/repetitive generation specifically.
+  neftune_noise_alpha: 5
+  # Softens the next-token target off a hard 1.0/0.0 split. An overconfident model is the
+  # precondition for greedy decoding to lock onto one token and repeat it forever, since nothing
+  # else stays competitive -- this keeps a bit of probability mass on the runner-up tokens.
+  label_smoothing_factor: 0.1
   max_seq_length: 1536
   logging_steps: 10
   eval_steps: 50               # how often (in steps) eval loss is computed
@@ -211,4 +225,9 @@ training:
   # size long before compute is, so this is not optional here.
   early_stopping: true
   early_stopping_patience: 5
-  early_stopping_threshold: 0.0
+  # 0.0 (this repo's default) counts any decrease, however small, as improvement -- on a 500-row
+  # eval split that includes noise-level "improvement", so a run that has already flattened out
+  # (checkpoint-5000 of this run plateaued at eval_loss ~0.242 by step ~3000-5000) can keep
+  # resetting its patience counter for thousands more steps instead of stopping. Requiring a real
+  # decrease lets it actually stop once progress does.
+  early_stopping_threshold: 0.002

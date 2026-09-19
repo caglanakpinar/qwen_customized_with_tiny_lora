@@ -119,6 +119,16 @@ class SFTTrainingConfig:
     # Where the zip is extracted to. None defaults to output_dir itself, so the extracted
     # checkpoint-N directories land exactly where the Trainer looks for them.
     gdrive_cache_dir: str | None = None
+    # Uniform noise added to token embeddings during the forward pass only (NEFTune), scaled by
+    # this alpha; None/0.0 disables it. Forces the model to predict the same next token despite a
+    # perturbed input, which tends to reduce degenerate/repetitive generation on small SFT runs at
+    # no inference-time cost -- the noise never applies outside training.
+    neftune_noise_alpha: float | None = None
+    # Softens the cross-entropy target from a one-hot (correct token -> 1.0, rest -> 0.0) to
+    # (correct token -> 1 - this, rest sharing this). 0.0 (HF's default) is off. A model trained
+    # on a hard target becomes overconfident -- exactly the condition under which greedy decoding
+    # locks onto a token and repeats it forever, since nothing else remains competitive.
+    label_smoothing_factor: float = 0.0
 
 
 @dataclass

@@ -100,10 +100,40 @@ def _generate_reply(model, tokenizer, prompt_messages: list[dict], max_new_token
             **inputs,
             max_new_tokens=max_new_tokens,
             do_sample=False,
+            # Greedy decoding alone has no defense against an exact-token repetition loop once
+            # the model's next-token confidence dips -- these two settings are what stop it.
+            repetition_penalty=1.2,
+            no_repeat_ngram_size=3,
             pad_token_id=tokenizer.pad_token_id,
         )
     reply_ids = output_ids[0, inputs["input_ids"].shape[1] :]
     return tokenizer.decode(reply_ids, skip_special_tokens=True).strip()
+
+
+# A run of the same token/short n-gram back-to-back this many times is unambiguous degeneration
+# -- exact-repetition loops (e.g. the "after after after ..." failure this constant was added
+# for) blow straight past this; normal prose does not reuse a 1-4 word span this densely.
+_MAX_CONSECUTIVE_REPEATS = 8
+
+
+def _has_repetition_loop(tokens: list[str], max_ngram: int = 4, max_repeats: int = _MAX_CONSECUTIVE_REPEATS) -> bool:
+    """True when some n-gram (1 to `max_ngram` tokens) repeats back-to-back `max_repeats`+ times.
+
+    `eval_loss`/perplexity are teacher-forced and can't see this failure mode at all -- a
+    checkpoint can score well there and still degenerate into a repetition loop the moment it
+    generates freely, which is exactly what made checkpoint-7000's output unusable despite no
+    eval_loss regression being visible.
+    """
+    for n in range(1, max_ngram + 1):
+        run = 1
+        for i in range(n, len(tokens) - n + 1):
+            if tokens[i : i + n] == tokens[i - n : i]:
+                run += 1
+                if run >= max_repeats:
+                    return True
+            else:
+                run = 1
+    return False
 
 
 def _generation_metrics(
@@ -117,11 +147,13 @@ def _generation_metrics(
     rouge_scores: list[float] = []
     token_f1_scores: list[float] = []
     code_valid_flags: list[bool] = []
+    repetition_loop_flags: list[bool] = []
     for messages in raw_messages:
         reference = messages[-1]["content"]
         hypothesis = _generate_reply(model, tokenizer, messages[:-1], max_new_tokens)
         rouge_scores.append(_rouge_l_f1(reference, hypothesis))
         token_f1_scores.append(_token_f1(reference, hypothesis))
+        repetition_loop_flags.append(_has_repetition_loop(_tokenize(hypothesis)))
         if _extract_python_block(reference) is not None:
             hypothesis_code = _extract_python_block(hypothesis)
             code_valid_flags.append(bool(hypothesis_code) and _is_valid_python(hypothesis_code))
@@ -129,6 +161,7 @@ def _generation_metrics(
     metrics = {
         "rouge_l_f1": sum(rouge_scores) / len(rouge_scores),
         "token_f1": sum(token_f1_scores) / len(token_f1_scores),
+        "repetition_loop_rate": sum(repetition_loop_flags) / len(repetition_loop_flags),
         "num_generation_samples": len(raw_messages),
     }
     if code_valid_flags:
@@ -254,10 +287,15 @@ def run_eval(
 
     results = {"base": base_metrics, "checkpoint": adapter_metrics}
 
-    click.echo("\nResults on the held-out eval split (lower is better, except *_f1/*_rate):")
+    # repetition_loop_rate breaks the usual "*_rate is higher-is-better" pattern below -- it is a
+    # defect rate, so lower is better for it same as eval_loss/perplexity.
+    click.echo(
+        "\nResults on the held-out eval split "
+        "(lower is better, except *_f1/code_valid_rate; repetition_loop_rate wants lower too):"
+    )
     headers = ["eval_loss", "perplexity"]
     if raw_messages:
-        headers += ["rouge_l_f1", "token_f1"]
+        headers += ["rouge_l_f1", "token_f1", "repetition_loop_rate"]
         if "code_valid_rate" in adapter_metrics:
             headers.append("code_valid_rate")
     click.echo(f"{'':12}" + "".join(f"{h:>14}" for h in headers))
@@ -285,6 +323,10 @@ def run_eval(
                     {
                         "rouge_l_f1": adapter_metrics["rouge_l_f1"] - base_metrics["rouge_l_f1"],
                         "token_f1": adapter_metrics["token_f1"] - base_metrics["token_f1"],
+                        "repetition_loop_rate": (
+                            adapter_metrics["repetition_loop_rate"]
+                            - base_metrics["repetition_loop_rate"]
+                        ),
                     }
                     if raw_messages
                     else {}

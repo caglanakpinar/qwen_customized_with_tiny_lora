@@ -235,6 +235,8 @@ def run_sft_core(
         max_grad_norm=train_cfg.max_grad_norm,
         weight_decay=train_cfg.weight_decay,
         adam_beta2=train_cfg.adam_beta2,
+        neftune_noise_alpha=train_cfg.neftune_noise_alpha,
+        label_smoothing_factor=train_cfg.label_smoothing_factor,
         **{length_arg: train_cfg.max_seq_length},
         logging_steps=train_cfg.logging_steps,
         save_strategy="steps",

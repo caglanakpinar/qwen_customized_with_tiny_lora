@@ -152,6 +152,10 @@ def _generate(model, tokenizer, messages: list, max_new_tokens: int, temperature
             max_new_tokens=max_new_tokens,
             do_sample=temperature > 0,
             temperature=temperature if temperature > 0 else None,
+            # Without these, a dip in next-token confidence can fall into an exact-token
+            # repetition loop that never recovers (greedy) or wanders it for a while (sampled).
+            repetition_penalty=1.2,
+            no_repeat_ngram_size=3,
             pad_token_id=tokenizer.pad_token_id,
         )
     reply_ids = output_ids[0, inputs["input_ids"].shape[1] :]
