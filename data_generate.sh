@@ -16,7 +16,7 @@
 #     STORES_ONLY      set to 1 to rebuild only Chroma/FAISS         (default: unset -- leaves the JSONL alone)
 #     EVAL_RECORDS     held-out eval record count                   (default: 4000)
 #     SHARD_MB         shard size in MB                              (default: 256)
-#     SEED             random seed                                   (default: 42)
+#     SEED             random seed                                   (default: 777)
 
 set -euo pipefail
 

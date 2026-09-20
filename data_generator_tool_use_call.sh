@@ -28,7 +28,7 @@
 #     VARIANTS        draws per conversation template           (default: 4)
 #     EVAL_RECORDS    held-out eval record count                (default: 500)
 #     SHARD_MB        shard size in MB                          (default: 256)
-#     SEED            random seed                               (default: 42)
+#     SEED            random seed                               (default: 777)
 #     TOKENIZER       tokenizer for the render/length check     (default: Qwen/Qwen2.5-0.5B-Instruct)
 #     MAX_TOKENS      longest record the check accepts          (default: 1536 -- training.max_seq_length)
 #     FRESH           1 to rebuild from scratch                 (default: unset -- appends)
@@ -83,7 +83,7 @@ TARGET_MB="${TARGET_MB:-0}"
 VARIANTS="${VARIANTS:-4}"
 EVAL_RECORDS="${EVAL_RECORDS:-500}"
 SHARD_MB="${SHARD_MB:-256}"
-SEED="${SEED:-42}"
+SEED="${SEED:-777}"
 TOKENIZER="${TOKENIZER:-Qwen/Qwen2.5-0.5B-Instruct}"
 MAX_TOKENS="${MAX_TOKENS:-1536}"
 CHECK="${CHECK:-1}"

@@ -51,7 +51,7 @@
 #     FORMATS         comma-separated: sft, grpo           (default: sft)
 #     EVAL_RECORDS    held-out records *per corpus*        (default: 4000 -- so 12000 in the union)
 #     SHARD_MB        shard size in MB                     (default: 512)
-#     SEED            random seed                          (default: 42)
+#     SEED            random seed                          (default: 777)
 #     FRESH           1 to rebuild from scratch            (default: unset -- extends)
 #     NO_STORES       1 to skip the Chroma/FAISS build     (default: 1 -- set 0 to build them)
 #     NO_KB           1 to skip the knowledge-base shapes  (default: unset)
@@ -115,7 +115,7 @@ STAGES="${STAGES:-synthetic,code_base,tool_use}"
 FORMATS="${FORMATS:-sft}"
 EVAL_RECORDS="${EVAL_RECORDS:-4000}"
 SHARD_MB="${SHARD_MB:-512}"
-SEED="${SEED:-42}"
+SEED="${SEED:-777}"
 NO_STORES="${NO_STORES:-1}"
 CHECK="${CHECK:-1}"
 MAX_VARIANTS="${MAX_VARIANTS:-256}"

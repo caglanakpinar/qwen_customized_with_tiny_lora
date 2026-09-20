@@ -23,7 +23,7 @@
 #     TARGET_MB       stop after roughly this many MB     (default: 0 -- write everything)
 #     EVAL_RECORDS    held-out eval record count          (default: 500)
 #     SHARD_MB        shard size in MB                    (default: 256)
-#     SEED            random seed                         (default: 42)
+#     SEED            random seed                         (default: 777)
 #     FRESH           1 to rebuild from scratch           (default: unset -- appends)
 #     CHECK           0 to skip the code-block check      (default: 1)
 #     CHECK_ONLY      1 to check and exit                 (default: unset)
@@ -62,7 +62,7 @@ FORMATS="${FORMATS:-sft}"
 TARGET_MB="${TARGET_MB:-0}"
 EVAL_RECORDS="${EVAL_RECORDS:-500}"
 SHARD_MB="${SHARD_MB:-256}"
-SEED="${SEED:-42}"
+SEED="${SEED:-777}"
 CHECK="${CHECK:-1}"
 DOWNLOAD_DIR="${DOWNLOAD_DIR:-data/kaggle}"
 
