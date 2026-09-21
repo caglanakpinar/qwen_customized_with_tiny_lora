@@ -35,6 +35,21 @@ _ADAPTER_FILES = [
     "chat_template.jinja",
 ]
 
+# A layer_expand checkpoint is a whole merged model, not an adapter -- there is no
+# adapter_config.json/adapter_model.safetensors, and the sidecar has to travel with the weights
+# or the repo is unloadable (see layer_expand/model.py's own SIDECAR_NAME docs). Same exclusion
+# philosophy as _ADAPTER_FILES: optimizer.pt/scheduler.pt/rng_state.pth/trainer_state.json/
+# training_args.bin are resume-training state, not something inference needs.
+_LAYER_EXPAND_FILES = [
+    "config.json",
+    "model.safetensors",
+    "layer_expand.json",
+    "generation_config.json",
+    "tokenizer.json",
+    "tokenizer_config.json",
+    "chat_template.jinja",
+]
+
 _PROJECT_URL = "https://github.com/caglanakpinar/llm_with_tiny_lora"
 
 # Which training config each method was run from, for the hyperparameter table. The adapter's own
@@ -530,6 +545,224 @@ def _hyperparameter_table(config: dict, header: dict, train_cfg: dict, peft_type
     return "\n".join(["| | |", "|---|---|", *(f"| {name} | {value} |" for name, value in rows)])
 
 
+def _layer_expand_hyperparameter_table(sidecar: dict, train_cfg: dict, block_params: int) -> str:
+    shape = sidecar["shape"]
+    training = train_cfg.get("training", {})
+    data = train_cfg.get("data", {})
+
+    rows = [
+        ("Base model", f"`{sidecar['base_model']}`"),
+        ("New block position", f"layer {', '.join(str(i) for i in sidecar['layers'])} "
+                                f"(appended after the base model's {sidecar['base_num_hidden_layers']})"),
+        ("Block width", f"{shape['hidden_size']}d / {shape['intermediate_size']} MLP, "
+                         f"{shape['num_attention_heads']} heads, {shape['num_key_value_heads']} KV heads"),
+        ("Wrapped", "yes -- 896 → {} → 896 projections around the block".format(shape["hidden_size"])
+                    if sidecar["wrapped"] else "no -- base-width block, stock-loadable"),
+        ("Initialisation", f"`{sidecar['init']}`" + (
+            " (block starts as an exact residual passthrough)" if sidecar["init"] == "identity" else ""
+        )),
+        ("Frozen base built from", ", ".join(f"`{a}`" for a in sidecar.get("base_adapters", [])) or "stock base model"),
+        ("New block parameters", f"{block_params:,}"),
+    ]
+    if training:
+        batch = training.get("per_device_train_batch_size")
+        accum = training.get("gradient_accumulation_steps")
+        rows += [
+            (
+                "Optimizer",
+                f"AdamW, `lr={training.get('learning_rate')}`, "
+                f"{training.get('lr_scheduler_type')} schedule, {training.get('warmup_steps')} warmup steps",
+            ),
+            ("Weight decay", str(training.get("weight_decay"))),
+            ("Effective batch size", f"{batch * accum} (`per_device={batch}` × `grad_accum={accum}`)"),
+            ("Max sequence length", str(training.get("max_seq_length"))),
+            ("Precision", "bf16" if training.get("bf16") else "fp32"),
+        ]
+        if training.get("neftune_noise_alpha"):
+            rows.append(("NEFTune noise alpha", str(training["neftune_noise_alpha"])))
+        if training.get("label_smoothing_factor"):
+            rows.append(("Label smoothing", str(training["label_smoothing_factor"])))
+        rows.append((
+            "Early stopping",
+            f"on eval_loss, patience {training.get('early_stopping_patience')}, "
+            f"threshold {training.get('early_stopping_threshold')}"
+            if training.get("early_stopping")
+            else "off",
+        ))
+    if data.get("max_samples"):
+        rows.append(("Training subset", f"{data['max_samples']:,} samples"))
+    if data.get("max_eval_samples"):
+        rows.append(("Eval split", f"{data['max_eval_samples']:,} held-out samples"))
+
+    return "\n".join(["| | |", "|---|---|", *(f"| {name} | {value} |" for name, value in rows)])
+
+
+def build_layer_expand_card(
+    *,
+    repo_id: str,
+    sidecar: dict,
+    train_cfg: dict,
+    config_path: str,
+    step: int,
+    epoch: float,
+    eval_loss: float,
+    benchmark: dict | None,
+    corpus: tuple[int, float, float] | None,
+    release_notes: str,
+) -> str:
+    base_params = 494_000_000
+    block_params = sidecar["block_parameters"]
+    total_params = base_params + block_params
+
+    if corpus:
+        shards, gigabytes, millions = corpus
+        corpus_line = (
+            f"The full corpus is ~{millions:.0f}M records (~{gigabytes:.0f} GB across {shards} shards)"
+        )
+    else:
+        corpus_line = "The full corpus is generated locally by the project's `data_generate.sh`"
+
+    subset = train_cfg.get("data", {}).get("max_samples")
+    eval_subset = train_cfg.get("data", {}).get("max_eval_samples")
+    wrapped_note = (
+        "This checkpoint is **not** loadable by a stock `AutoModelForCausalLM.from_pretrained` -- "
+        "the new block is wider than the rest of the stack, which `Qwen2Config` cannot describe, "
+        "so `config.json` is deliberately retyped `model_type: layer_expand` to fail loudly instead "
+        "of silently reinitialising the block and returning a model that loads fine and produces "
+        "garbage."
+        if sidecar["wrapped"]
+        else "This checkpoint is a stock-shaped Qwen2 (the new block matches the base model's own "
+        "width) and loads with a standard `AutoModelForCausalLM.from_pretrained`, but still needs "
+        "`config.num_hidden_layers` bumped -- use the loader below rather than assuming."
+    )
+
+    return f"""\
+---
+base_model: {sidecar['base_model']}
+pipeline_tag: text-generation
+tags:
+- sft
+- layer-expand
+- block-expansion
+- tool-use
+- function-calling
+- transformers
+- trl
+- data-science
+---
+
+# Qwen2.5-0.5B Layer-Expand — Data Science Assistant
+
+A depth-expanded fine-tune of
+[{sidecar['base_model']}](https://huggingface.co/{sidecar['base_model']}): one new transformer
+block appended after the base model's {sidecar['base_num_hidden_layers']} layers, trained densely
+while everything before it stays frozen. It answers data-science concept questions and writes
+runnable pandas / matplotlib / scikit-learn / statistics / SQL code.
+
+This version trains **{block_params:,} new parameters** on top of a
+**{base_params:,}-parameter** frozen base — the shipped model has **{total_params:,}** total
+parameters, of which the new block is **{block_params / total_params * 100:.1f}%**.
+
+Trained with the [llm_with_tiny_lora]({_PROJECT_URL}) project.
+
+## What's new in this version
+
+{release_notes.strip()}
+
+## Method — layer expansion (block expansion)
+
+Unlike LoRA or TinyLoRA, which adapt existing weight matrices with a low-rank update, this method
+adds a brand new transformer block to the stack and trains it densely -- every one of its
+{block_params:,} parameters is a real, independently-learned weight, not a rank-decomposed delta.
+
+The frozen base underneath is not the stock checkpoint either: {
+    ", then ".join(f"`{a}`" for a in sidecar.get("base_adapters", []))
+    or "the stock base model"
+} {"were" if len(sidecar.get("base_adapters", [])) != 1 else "was"} merged into the base weights,
+in that order, before the new block was added -- so this checkpoint carries everything those
+earlier runs learned, plus what the new block learned on top.
+
+The new block starts from `init: "{sidecar['init']}"`{
+    ", which zeroes its output projections so the block is an exact identity function on its "
+    "first forward pass -- training starts from a working model and learns a delta, rather than "
+    "the new block injecting noise into a working stack from step one"
+    if sidecar["init"] == "identity" else ""
+}.
+
+{wrapped_note}
+
+## Training data
+
+A synthetic data-science assistant corpus generated by the same project: concept Q&A, runnable
+pandas/matplotlib/scikit-learn/statistics/SQL tasks, and tool-use conversations in which the
+assistant calls a data tool and answers from what it returns. {corpus_line}; this run trained on a
+{f'{subset:,}-sample' if subset else ''} subset with a {f'{eval_subset:,}-sample' if eval_subset else ''}
+held-out split for eval.
+
+{_DATASET_BLURB}
+
+## Hyperparameters
+
+{_layer_expand_hyperparameter_table(sidecar, train_cfg, block_params)}
+
+Full config: [`{config_path}`]({_PROJECT_URL}/blob/main/{config_path}).
+
+## Results
+
+{_results_section(benchmark, step=step, epoch=epoch, eval_loss=eval_loss)}
+
+## Usage
+
+This repo needs the project's own `layer_expand` loader, not a bare `transformers` install --
+see the note above on why a stock `AutoModelForCausalLM` cannot rebuild this stack.
+
+```bash
+pip install "git+{_PROJECT_URL}"
+```
+
+```python
+from huggingface_hub import snapshot_download
+from layer_expand.model import load_expanded_model
+from transformers import AutoTokenizer
+
+local_path = snapshot_download("{repo_id}")
+model = load_expanded_model(local_path)
+tokenizer = AutoTokenizer.from_pretrained(local_path)
+
+messages = [{{"role": "user", "content": "How do I compute a rolling 7-day average in pandas?"}}]
+inputs = tokenizer.apply_chat_template(
+    messages, add_generation_prompt=True, return_tensors="pt", return_dict=True
+)
+output = model.generate(**inputs, max_new_tokens=256, do_sample=False, repetition_penalty=1.2, no_repeat_ngram_size=3)
+print(tokenizer.decode(output[0, inputs["input_ids"].shape[1]:], skip_special_tokens=True))
+```
+
+Or, from a checkout of the project itself: `tiny-lora chat --adapter <local checkpoint dir>` --
+it detects the `layer_expand.json` sidecar and loads through this same path automatically.
+
+{_TOOL_USE_SECTION}
+## Limitations
+
+- Not loadable by a stock `transformers.AutoModelForCausalLM` -- requires this project's
+  `layer_expand` package to rebuild the stack from `layer_expand.json`.
+- 0.5B-class base model: capable of short, focused answers but not competitive with larger models
+  on complex multi-step reasoning.
+- Narrow domain: tuned specifically for data-science Q&A and code generation; general-purpose chat
+  quality is not a training objective.
+- The generated code is written to be runnable, but it is generated — read it before running it
+  against anything that matters.
+- Identity/safety guardrails (e.g. not identifying as "Qwen"/"Alibaba") are implemented at the
+  application layer in the project's [`chat.py`]({_PROJECT_URL}/blob/main/src/tiny_lora/chat.py)
+  wrapper, not baked into the weights — raw `generate()` calls against this checkpoint may surface
+  the base model's own identity.
+
+## License
+
+Base model ([{sidecar['base_model']}](https://huggingface.co/{sidecar['base_model']}))
+is Apache 2.0. This checkpoint is released under the same terms.
+"""
+
+
 def build_model_card(
     *,
     repo_id: str,
@@ -705,33 +938,57 @@ def main() -> None:
     args = parser.parse_args()
 
     checkpoint_dir: Path = args.checkpoint_dir
-    for name in _ADAPTER_FILES:
+    is_layer_expand = (checkpoint_dir / "layer_expand.json").exists()
+    files_to_copy = _LAYER_EXPAND_FILES if is_layer_expand else _ADAPTER_FILES
+
+    for name in files_to_copy:
         if not (checkpoint_dir / name).exists():
             raise FileNotFoundError(f"{checkpoint_dir / name} is missing -- is this a real checkpoint dir?")
 
-    config = _load_json(checkpoint_dir / "adapter_config.json")
-    header = _safetensors_header(checkpoint_dir / "adapter_model.safetensors")
     state = _load_json(checkpoint_dir / "trainer_state.json")
-    peft_type = config.get("peft_type", "LORA")
-    config_path = str(args.train_config) if args.train_config else _METHOD_CONFIGS.get(peft_type, "")
-
     step = state["global_step"]
     epoch = state["epoch"]
     eval_loss = _checkpoint_eval_loss(state)
 
-    card = build_model_card(
-        repo_id=args.repo_id,
-        config=config,
-        header=header,
-        train_cfg=_load_train_config(Path(config_path)) if config_path else {},
-        config_path=config_path,
-        step=step,
-        epoch=epoch,
-        eval_loss=eval_loss,
-        benchmark=_find_benchmark(args.eval_results, checkpoint_dir),
-        corpus=_corpus_stats(args.dataset_glob),
-        release_notes=args.release_notes,
-    )
+    if is_layer_expand:
+        sidecar = _load_json(checkpoint_dir / "layer_expand.json")
+        config_path = str(args.train_config) if args.train_config else "configs/sft_layer_expand.yaml"
+        card = build_layer_expand_card(
+            repo_id=args.repo_id,
+            sidecar=sidecar,
+            train_cfg=_load_train_config(Path(config_path)) if config_path else {},
+            config_path=config_path,
+            step=step,
+            epoch=epoch,
+            eval_loss=eval_loss,
+            benchmark=_find_benchmark(args.eval_results, checkpoint_dir),
+            corpus=_corpus_stats(args.dataset_glob),
+            release_notes=args.release_notes,
+        )
+        commit_message = args.commit_message or (
+            f"Update layer-expand block: step {step}, eval_loss {eval_loss:.4f}"
+        )
+    else:
+        config = _load_json(checkpoint_dir / "adapter_config.json")
+        header = _safetensors_header(checkpoint_dir / "adapter_model.safetensors")
+        peft_type = config.get("peft_type", "LORA")
+        config_path = str(args.train_config) if args.train_config else _METHOD_CONFIGS.get(peft_type, "")
+
+        card = build_model_card(
+            repo_id=args.repo_id,
+            config=config,
+            header=header,
+            train_cfg=_load_train_config(Path(config_path)) if config_path else {},
+            config_path=config_path,
+            step=step,
+            epoch=epoch,
+            eval_loss=eval_loss,
+            benchmark=_find_benchmark(args.eval_results, checkpoint_dir),
+            corpus=_corpus_stats(args.dataset_glob),
+            release_notes=args.release_notes,
+        )
+        method = _METHOD_TITLES.get(peft_type, peft_type)
+        commit_message = args.commit_message or f"Update adapter: {method} step {step}, eval_loss {eval_loss:.4f}"
 
     if args.dry_run:
         print(card)
@@ -739,15 +996,13 @@ def main() -> None:
 
     with tempfile.TemporaryDirectory() as tmp:
         staging = Path(tmp)
-        for name in _ADAPTER_FILES:
+        for name in files_to_copy:
             shutil.copy2(checkpoint_dir / name, staging / name)
         (staging / "README.md").write_text(card)
 
         from huggingface_hub import HfApi
 
         api = HfApi()
-        method = _METHOD_TITLES.get(peft_type, peft_type)
-        commit_message = args.commit_message or f"Update adapter: {method} step {step}, eval_loss {eval_loss:.4f}"
         result = api.upload_folder(
             repo_id=args.repo_id,
             folder_path=str(staging),
