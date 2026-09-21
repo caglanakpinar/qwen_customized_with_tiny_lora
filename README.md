@@ -473,6 +473,10 @@ bash upload_to_hf.sh
 REPO_ID=your-user/your-adapter \
   CHECKPOINT_DIR=outputs/sft-layer-lora/checkpoint-3200 \
   TAG=v0.3 bash upload_to_hf.sh
+
+# a layer_expand checkpoint (whole merged model, not an adapter) -- detected automatically
+CHECKPOINT_DIR=outputs/sft-layer-expand-wide/checkpoint-13000 \
+  TAG=v-layer-expand-wide bash upload_to_hf.sh
 ```
 
 | Variable | Default | Description |
@@ -480,6 +484,24 @@ REPO_ID=your-user/your-adapter \
 | `REPO_ID` | `Caglana/qwen0.5b-tinylora-ds-assistant` | Target Hub repo. |
 | `CHECKPOINT_DIR` | `outputs/sft-ds-assistant/checkpoint-12000` | Local checkpoint to push. |
 | `TAG` | unset | Tag/revision name created for this commit. |
+
+`scripts/push_to_hub.py` detects a `layer_expand` checkpoint by its `layer_expand.json` sidecar
+and switches to a different file set and model card automatically -- no separate flag needed:
+
+- **Adapter checkpoints** (TinyLoRA, `layer_lora`) push `adapter_config.json` +
+  `adapter_model.safetensors` + tokenizer files. The card documents rank/target-modules/etc. and
+  shows a `PeftModel.from_pretrained(base_model, adapter_id)` usage snippet.
+- **`layer_expand` checkpoints** push `config.json` + `model.safetensors` + the `layer_expand.json`
+  sidecar + tokenizer files -- there is no adapter to push separately. The TinyLoRA and
+  `layer_lora` adapters this run was built on (`layer_expand.base_adapters`) are already merged
+  into the frozen base weights at that point (`merge_and_unload`), permanently -- the pushed repo
+  is one complete, self-contained checkpoint, not something you attach to a separately-downloaded
+  base model. The card documents that merge lineage, the new block's shape/init, and a usage
+  snippet through `layer_expand.model.load_expanded_model` instead of `PeftModel` (a stock
+  `AutoModelForCausalLM.from_pretrained` cannot load it -- see
+  [layer_expand's own note on why](configs/sft_layer_expand.yaml)). It also reports the
+  checkpoint's real `trainer_state.json` step/eval_loss rather than trusting the checkpoint
+  directory's number, since those can drift apart after a resumed run.
 
 ## Benchmark Results
 
