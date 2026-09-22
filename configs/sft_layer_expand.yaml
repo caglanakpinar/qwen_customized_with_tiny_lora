@@ -154,7 +154,7 @@ data:
   max_samples: 50000            # cap on training rows read from the glob
   max_eval_samples: 500         # eval runs every eval_steps and scores this whole split each time
   gdrive:
-    zip_file_id: 1X84m9ha8eyRo-5v6CVeStwv5mW3cCRsi
+    zip_file_id: 1J4ZK6-tv9HKYFRVqNv7PzAkgZ9ezBFRF
     cache_dir: "data/synthetic/dataset"
 
 training:
@@ -165,7 +165,7 @@ training:
   # machine; (3) if neither has a usable checkpoint, train from the beginning. Mirrors
   # data.gdrive above, but for a zipped output_dir/checkpoint-N rather than a dataset.
   gdrive:
-    zip_file_id: 1jicx3F_OZLG3ltPIffIisDB50e2yYAm_            # set to the Drive file id of a zipped outputs/checkpoint-N
+    zip_file_id: 1XYNm1NMI3QKcgZW_nwlFvPrYZ7fQK6J3            # set to the Drive file id of a zipped outputs/checkpoint-N
     cache_dir: "outputs/sft-layer-expand-wide"  # same as output_dir, so the checkpoint lands where the Trainer looks for it
   num_train_epochs: 1          # max_steps overrides this
   max_steps: 20000
