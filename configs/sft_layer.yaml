@@ -1,0 +1,133 @@
+# Layer growth: append one more transformer block on top of an already-expanded stack, and
+# fine-tune it *together with* the block(s) already there -- unlike layer_expand, which freezes
+# everything except the block it just added, this keeps the whole trainable tail open.
+#
+# Starting point is outputs/sft-layer-expand-wide/checkpoint-13000: a 25-layer model (base 24 +
+# one wide block at layer 24, from configs/sft_layer_expand.yaml). This round appends layer 25 at
+# the same width, and both 24 and 25 stay trainable -- only the original base (0-23, already
+# carrying the merged TinyLoRA + layer_lora weights) stays frozen.
+#
+# There is no base_adapters here, unlike layer_expand: whatever adapters the first round merged
+# are already baked into checkpoint-13000's weights, so there is nothing left to merge again.
+#
+# Loading this checkpoint later needs the layer_grow package, the same way a layer_expand
+# checkpoint needs layer_expand: `tiny-lora chat|serve|chat-api|eval --adapter <dir>` detect the
+# layer_grow.json sidecar and handle it automatically, as do chat.sh/web.sh/eval.sh via ADAPTER.
+#
+# Build the dataset first (or leave data.reader: "gdrive" below):
+#     bash data_generate.sh
+#
+# Then:
+#     poetry run layer_grow sft --config configs/sft_layer.yaml --no-quant
+#
+# or, since this is the default config, just:
+#     poetry run layer_grow sft --no-quant
+#
+# Grow further shapes/positions per-run without editing this file:
+#     poetry run layer_grow sft --layers 25 --hidden-size 1536 --num-attention-heads 24 \
+#         --intermediate-size 8320 --no-quant
+
+model:
+  model_name_or_path: "Qwen/Qwen2.5-0.5B-Instruct"  # base model pulled from the Hugging Face Hub
+  load_in_4bit: false          # full bf16; `--no-quant` forces this off regardless
+  torch_dtype: "auto"          # let transformers pick the dtype the checkpoint was saved in
+  trust_remote_code: false     # Qwen2.5 ships standard modeling code; no custom code needed
+  attn_implementation: null    # let transformers pick (e.g. sdpa); set "flash_attention_2" where supported
+
+layer_grow:
+  # The finished layer_expand (or layer_grow) checkpoint this round grows from. A directory
+  # holding layer_expand.json/layer_grow.json directly, or the run directory containing one, in
+  # which case the latest weights are taken. Everything checkpoint-13000 already learned --
+  # the merged TinyLoRA + layer_lora base, and the trained layer-24 block -- carries forward;
+  # there is nothing to re-merge, unlike layer_expand's base_adapters.
+  previous_checkpoint: "outputs/sft-layer-expand-wide/checkpoint-13000"
+
+  # Position(s) this round's new block(s) take in the *final* stack, 0-based. checkpoint-13000 is
+  # already 25 layers (0-23 base, 24 the first grown block), so [25] appends one more, giving 26.
+  layers: [25]
+
+  # Shape of this round's new block. null on all four inherits the *previous round's own* shape
+  # (see layer_grow.model.resolve_growth_shape) -- left null here to keep widening the same
+  # 1536d/8320-MLP/24-head block checkpoint-13000's layer 24 already is, rather than changing
+  # tack partway through. Override any of these to build a differently-shaped block instead.
+  hidden_size: null
+  intermediate_size: null
+  num_attention_heads: null
+  num_key_value_heads: null
+
+  # "identity" zeroes this round's block's output projections, so it starts as a residual
+  # passthrough and training moves away from exactly what checkpoint-13000 already was, rather
+  # than injecting noise into a working stack from step one. Same reasoning as layer_expand.init.
+  init: "identity"
+  init_std: 0.02               # std of the normal init applied before the output zeroing
+
+  # "auto" continues *this round* from <training.output_dir>/model if a previous attempt at it
+  # already finished, otherwise builds a fresh block for layer 25. A run interrupted partway is
+  # restored by the Trainer itself (optimizer state, LR schedule, step count included), which is
+  # why this deliberately ignores checkpoint-N in output_dir -- see layer_grow.model's docstring.
+  init_from_checkpoint: "auto"
+
+data:
+  # "local" reads dataset_name/eval_dataset_name straight off disk. "gdrive" first downloads
+  # a zip from Google Drive into gdrive.cache_dir and extracts it there, then reads the same
+  # paths -- so once downloaded, both readers behave identically.
+  reader: "gdrive"
+  dataset_name: "data/synthetic/dataset/sft_train-*.jsonl"   # training shards
+  eval_dataset_name: "data/synthetic/dataset/sft_eval.jsonl" # held-out split, enables eval loss
+  max_samples: 50000            # cap on training rows read from the glob
+  max_eval_samples: 500         # eval runs every eval_steps and scores this whole split each time
+  gdrive:
+    zip_file_id: 1J4ZK6-tv9HKYFRVqNv7PzAkgZ9ezBFRF
+    cache_dir: "data/synthetic/dataset"
+
+training:
+  # A fresh directory, not outputs/sft-layer-expand-wide: this run's checkpoints are a different
+  # architecture (26 layers, two trainable blocks) from that run's (25 layers, one). Writing into
+  # the same dir would collide with check_growth_matches/check_sidecar_matches on the first save.
+  output_dir: "outputs/sft-layer-grow"
+  # No training.gdrive block here (yet): unlike layer_expand.base_adapters, which points at
+  # finished runs that already exist somewhere, this output_dir starts empty -- there is no
+  # zipped checkpoint-N for *this* run to fall back to on a fresh machine until one has actually
+  # been trained and uploaded. Add one here once you have a run worth resuming from elsewhere.
+  num_train_epochs: 1          # max_steps overrides this
+  max_steps: 20000
+  # Same budget as layer_expand's wide block: two trainable blocks (24 and 25) at this width cost
+  # roughly double the activations of one, but the vocab projection still dominates peak memory
+  # (151,936 x ~10 bytes/token), so the effect on the batch-size table below is modest, not 2x.
+  #   batch 1 x 1536 -> ~4.6GB    batch 4 x 1536 -> ~12.9GB
+  #   batch 2 x 1536 -> ~7.2GB    batch 8 x 1536 -> ~23.5GB (rough; measure before committing to it)
+  per_device_train_batch_size: 8
+  per_device_eval_batch_size: 8
+  gradient_accumulation_steps: 4   # effective batch size = train_batch_size * this
+  # Two trainable blocks, one of them (layer 24) already past its own identity-init phase, so a
+  # slightly lower LR than layer_expand's first round -- layer 24 is now a working part of the
+  # model, not a passthrough being nudged off zero, and a peak LR sized for that first move would
+  # overshoot on a block that already has real weights to disturb only carefully.
+  learning_rate: 5.0e-5
+  lr_scheduler_type: "cosine"
+  warmup_steps: 200            # shorter than layer_expand's: only layer 25 starts at identity now
+  max_grad_norm: 1.0
+  # Both trainable blocks have real, non-zero weights by the time this round starts (layer 24
+  # from its own training, layer 25 from N(0, init_std) like layer_expand's blocks always do) --
+  # same reasoning as sft_layer_expand.yaml's weight_decay, carried forward.
+  weight_decay: 0.02
+  adam_beta2: 0.999
+  neftune_noise_alpha: 5
+  label_smoothing_factor: 0.1
+  max_seq_length: 1536
+  logging_steps: 10
+  eval_steps: 50               # how often (in steps) eval loss is computed
+  save_steps: 250              # must stay a round multiple of eval_steps when early_stopping is on
+  save_total_limit: 5          # keep only the most recent few; the best one is exempt
+  bf16: true
+  # Off on purpose, same reasoning as layer_expand: every layer before the trainable tail is
+  # frozen and stores no activations to recompute. Lower per_device_train_batch_size instead.
+  gradient_checkpointing: false
+  report_to: "none"
+  # Two trainable blocks (92.4M params combined) against the same ~50k-sample dataset makes the
+  # overfitting risk layer_expand already flagged even more binding, not less.
+  early_stopping: true
+  early_stopping_patience: 5
+  # See sft_layer_expand.yaml's note: 0.0 counts any decrease, however small, as improvement and
+  # can let a plateaued run grind on for thousands of extra steps. This carries the same fix.
+  early_stopping_threshold: 0.002
