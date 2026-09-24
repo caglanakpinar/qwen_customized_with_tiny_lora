@@ -205,10 +205,24 @@ training:
   # patterns -- a further hedge against the same overfitting risk, and empirically a hedge
   # against degenerate/repetitive generation specifically.
   neftune_noise_alpha: 5
-  # Softens the next-token target off a hard 1.0/0.0 split. An overconfident model is the
-  # precondition for greedy decoding to lock onto one token and repeat it forever, since nothing
-  # else stays competitive -- this keeps a bit of probability mass on the runner-up tokens.
-  label_smoothing_factor: 0.1
+  # Softening the next-token target off a hard 1.0/0.0 split (nonzero here) is a real hedge
+  # against greedy decoding locking onto one token and repeating it forever, since nothing else
+  # stays competitive under an overconfident model -- but it comes at a cost worth knowing before
+  # turning it back on: label smoothing changes what eval_loss *means*, not just how training
+  # behaves. Cross-entropy's floor is near 0 for a perfect model; a smoothed target's floor is
+  # the entropy of that softened distribution instead, which for this vocab (151,936 tokens) at
+  # smoothing 0.1 works out to about 1.52 -- so a run trained with label_smoothing_factor: 0.1
+  # cannot report an eval_loss much below ~1.5 no matter how good it gets, and comparing that
+  # number against a smoothing: 0.0 run's (like the 0.242 this run's own checkpoint-5000 hit,
+  # noted below) looks like a severe regression that is largely a different loss function, not a
+  # worse model. checkpoint-13000 plateaued at ~1.81-1.85 under smoothing 0.1 -- only ~0.3 above
+  # that floor, i.e. close to saturating the metric, not stuck. Left at 0.0 here so eval_loss
+  # stays directly comparable across runs of this config; repetition_penalty/no_repeat_ngram_size
+  # at decode time (eval.py, chat.py) plus weight_decay/neftune_noise_alpha above still hedge
+  # against the same repetition-loop failure mode without touching what eval_loss means. Judge
+  # generation quality itself (rouge_l_f1/token_f1/code_valid_rate/repetition_loop_rate from
+  # `eval.sh --generation-samples`) rather than eval_loss if you do turn this back on.
+  label_smoothing_factor: 0.0
   max_seq_length: 1536
   logging_steps: 10
   eval_steps: 50               # how often (in steps) eval loss is computed
