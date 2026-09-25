@@ -136,12 +136,18 @@ def load_peft_adapter(
 
     A `layer_expand` run saves a whole model rather than an adapter -- there is no
     `adapter_config.json` to attach and, when its new block is wider than the base, no way for
-    `from_pretrained` to rebuild the stack from config.json alone. Detecting it here means
-    `chat`, `serve`, `chat-api` and `eval` all accept one with no changes of their own; the
-    import is deferred because layer_expand imports this module.
+    `from_pretrained` to rebuild the stack from config.json alone. `layer_grow` checkpoints are
+    the same story, one or more rounds further along. Detecting either here means `chat`,
+    `serve`, `chat-api` and `eval` all accept one with no changes of their own; the imports are
+    deferred because both modules import this one.
     """
     from layer_expand.model import is_expanded_model_dir, load_expanded_model
+    from layer_grow.model import is_grown_model_dir, load_grown_model
 
+    if is_grown_model_dir(adapter_path):
+        return load_grown_model(
+            adapter_path, load_in_4bit=load_in_4bit, trust_remote_code=trust_remote_code
+        )
     if is_expanded_model_dir(adapter_path):
         return load_expanded_model(
             adapter_path, load_in_4bit=load_in_4bit, trust_remote_code=trust_remote_code
@@ -165,8 +171,12 @@ def resolve_adapter_base_model(adapter_path: str | Path) -> str:
     base model normally never needs to be typed by hand.
     """
     from layer_expand.model import expanded_base_model, is_expanded_model_dir
+    from layer_grow.model import expanded_base_model as grown_base_model, is_grown_model_dir
 
-    # An expanded model records its base in layer_expand.json instead, having no adapter config.
+    # An expanded or grown model records its base in its own sidecar instead, having no adapter
+    # config.
+    if is_grown_model_dir(adapter_path):
+        return grown_base_model(adapter_path)
     if is_expanded_model_dir(adapter_path):
         return expanded_base_model(adapter_path)
 

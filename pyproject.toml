@@ -10,6 +10,7 @@ packages = [
     { include = "lora_base", from = "src" },
     { include = "layer_lora", from = "src" },
     { include = "layer_expand", from = "src" },
+    { include = "layer_grow", from = "src" },
 ]
 
 [tool.poetry.dependencies]
@@ -79,6 +80,7 @@ jupyterlab = "^4.6.3"
 tiny-lora = "tiny_lora.cli:cli"
 layer_lora = "layer_lora.cli:cli"
 layer_expand = "layer_expand.cli:cli"
+layer_grow = "layer_grow.cli:cli"
 
 [build-system]
 requires = ["poetry-core"]

@@ -2,13 +2,24 @@
 # fine-tune it *together with* the block(s) already there -- unlike layer_expand, which freezes
 # everything except the block it just added, this keeps the whole trainable tail open.
 #
-# Starting point is outputs/sft-layer-expand-wide/checkpoint-13000: a 25-layer model (base 24 +
-# one wide block at layer 24, from configs/sft_layer_expand.yaml). This round appends layer 25 at
-# the same width, and both 24 and 25 stay trainable -- only the original base (0-23, already
-# carrying the merged TinyLoRA + layer_lora weights) stays frozen.
+# Starting point is outputs/sft-layer-expand-wide/checkpoint-16000: a 25-layer model (base 24 +
+# one wide block at layer 24, from configs/sft_layer_expand.yaml). It is the newest -- and, as of
+# this writing, the ONLY -- checkpoint left under that run's output_dir; earlier checkpoints
+# (including checkpoint-11200, benchmarked in README.md's run 7) were rotated out by
+# training.save_total_limit. Note the caveat that comes with it: README.md's "Benchmark Results"
+# section reads checkpoint-16000 as showing overfitting relative to checkpoint-11200 (flat
+# eval_loss/perplexity despite 4800 more steps, and falling rouge_l_f1/token_f1) -- growing a much
+# larger block on top of it (see the width note below) compounds whatever that run already
+# overfit, rather than starting from a clean base. Worth a fresh, non-rotated checkpoint-11200-like
+# save next time before growing again, if this run is repeated.
+#
+# This round appends layer 25 at 2x layer 24's width (3072 vs 1536), NOT the same width -- see the
+# shape block below for why that is not simply "2x the parameters." Both 24 and 25 stay trainable;
+# only the original base (0-23, already carrying the merged TinyLoRA + layer_lora weights) stays
+# frozen.
 #
 # There is no base_adapters here, unlike layer_expand: whatever adapters the first round merged
-# are already baked into checkpoint-13000's weights, so there is nothing left to merge again.
+# are already baked into checkpoint-16000's weights, so there is nothing left to merge again.
 #
 # Loading this checkpoint later needs the layer_grow package, the same way a layer_expand
 # checkpoint needs layer_expand: `tiny-lora chat|serve|chat-api|eval --adapter <dir>` detect the
@@ -24,8 +35,8 @@
 #     poetry run layer_grow sft --no-quant
 #
 # Grow further shapes/positions per-run without editing this file:
-#     poetry run layer_grow sft --layers 25 --hidden-size 1536 --num-attention-heads 24 \
-#         --intermediate-size 8320 --no-quant
+#     poetry run layer_grow sft --layers 25 --hidden-size 3072 --num-attention-heads 48 \
+#         --intermediate-size 16640 --no-quant
 
 model:
   model_name_or_path: "Qwen/Qwen2.5-0.5B-Instruct"  # base model pulled from the Hugging Face Hub
@@ -37,26 +48,54 @@ model:
 layer_grow:
   # The finished layer_expand (or layer_grow) checkpoint this round grows from. A directory
   # holding layer_expand.json/layer_grow.json directly, or the run directory containing one, in
-  # which case the latest weights are taken. Everything checkpoint-13000 already learned --
+  # which case the latest weights are taken. Everything checkpoint-16000 already learned --
   # the merged TinyLoRA + layer_lora base, and the trained layer-24 block -- carries forward;
   # there is nothing to re-merge, unlike layer_expand's base_adapters.
-  previous_checkpoint: "outputs/sft-layer-expand-wide/checkpoint-13000"
+  previous_checkpoint: "outputs/sft-layer-expand-wide/checkpoint-16000"
 
-  # Position(s) this round's new block(s) take in the *final* stack, 0-based. checkpoint-13000 is
+  # Google Drive fallback for previous_checkpoint, used only when nothing usable is found at that
+  # path locally -- e.g. a fresh machine that has not trained or downloaded
+  # outputs/sft-layer-expand-wide itself yet. Mirrors data.gdrive/training.gdrive above and in
+  # sft_layer_expand.yaml. Set zip_file_id to a zip of checkpoint-16000's contents (or of the
+  # whole outputs/sft-layer-expand-wide run) uploaded to Drive; leave it null to require the local
+  # path to already exist.
+  gdrive:
+    zip_file_id: null            # set to the Drive file id of a zipped checkpoint-16000
+    # Same as previous_checkpoint above -- spelled out explicitly (matching training.gdrive.cache_dir's
+    # style in sft_layer_expand.yaml) rather than left null-to-default, so a zip of just
+    # checkpoint-16000's contents lands directly where a local run would have written it.
+    cache_dir: "outputs/sft-layer-expand-wide/checkpoint-16000"
+
+  # Position(s) this round's new block(s) take in the *final* stack, 0-based. checkpoint-16000 is
   # already 25 layers (0-23 base, 24 the first grown block), so [25] appends one more, giving 26.
   layers: [25]
 
-  # Shape of this round's new block. null on all four inherits the *previous round's own* shape
-  # (see layer_grow.model.resolve_growth_shape) -- left null here to keep widening the same
-  # 1536d/8320-MLP/24-head block checkpoint-13000's layer 24 already is, rather than changing
-  # tack partway through. Override any of these to build a differently-shaped block instead.
-  hidden_size: null
-  intermediate_size: null
-  num_attention_heads: null
+  # Shape of this round's new block: 2x layer 24's width (1536 -> 3072), NOT null-inherit-previous
+  # (see layer_grow.model.resolve_growth_shape -- leaving all four null here would have kept layer
+  # 25 at layer 24's own 1536d/8320-MLP/24-head shape instead of widening it).
+  #
+  # 3072 = 48 heads x head_dim 64, same constraint layer_expand's own shape carries: hidden_size
+  # must equal num_attention_heads * 64, and head_dim itself cannot change (shared rotary tables
+  # and KV cache across the stack) -- so widen via num_attention_heads only.
+  #
+  # 16640 = 8320 * 2, keeping the same intermediate/hidden ratio (5.42, matching Qwen2.5-0.5B's
+  # own 4864/896 MLP ratio) that sft_layer_expand.yaml used for layer 24, rather than letting the
+  # ratio drift.
+  #
+  # IMPORTANT: doubling hidden_size does not double this block's parameter count -- the MLP term
+  # (3 * hidden_size * intermediate_size) scales with BOTH dimensions doubling, so it scales ~4x.
+  # This block: 178.5M params (vs layer 24's 46.2M, a 3.86x jump), and because layer_grow keeps
+  # every earlier block trainable too (see freeze_all_growth below), this run trains layer 24 AND
+  # 25 together: ~224.7M trainable params, ~45% of the ~494M-parameter model, against the same
+  # ~50k-row dataset that already showed overfitting signs on a 46.2M-param block alone (see
+  # README.md's checkpoint-16000 interpretation). Worth watching eval_loss closely from step 1.
+  hidden_size: 3072
+  intermediate_size: 16640
+  num_attention_heads: 48
   num_key_value_heads: null
 
   # "identity" zeroes this round's block's output projections, so it starts as a residual
-  # passthrough and training moves away from exactly what checkpoint-13000 already was, rather
+  # passthrough and training moves away from exactly what checkpoint-16000 already was, rather
   # than injecting noise into a working stack from step one. Same reasoning as layer_expand.init.
   init: "identity"
   init_std: 0.02               # std of the normal init applied before the output zeroing
@@ -91,11 +130,13 @@ training:
   # been trained and uploaded. Add one here once you have a run worth resuming from elsewhere.
   num_train_epochs: 1          # max_steps overrides this
   max_steps: 20000
-  # Same budget as layer_expand's wide block: two trainable blocks (24 and 25) at this width cost
-  # roughly double the activations of one, but the vocab projection still dominates peak memory
-  # (151,936 x ~10 bytes/token), so the effect on the batch-size table below is modest, not 2x.
-  #   batch 1 x 1536 -> ~4.6GB    batch 4 x 1536 -> ~12.9GB
-  #   batch 2 x 1536 -> ~7.2GB    batch 8 x 1536 -> ~23.5GB (rough; measure before committing to it)
+  # UNMEASURED, and the old estimate below no longer applies now that layer 25 is 3072-wide, not
+  # 1536: its own activations roughly double again (intermediate_size 16640 vs layer 24's 8320),
+  # and its optimizer state (AdamW moments over 178.5M params, ~3.86x layer 24's 46.2M) adds
+  # meaningfully more static memory than the old two-equal-blocks estimate assumed. The vocab
+  # projection (151,936 x ~10 bytes/token) still dominates per-token activation memory, so this
+  # is not a clean 2x/4x either -- measure before committing to a batch size; drop
+  # per_device_train_batch_size and raise gradient_accumulation_steps to match if it OOMs.
   per_device_train_batch_size: 8
   per_device_eval_batch_size: 8
   gradient_accumulation_steps: 4   # effective batch size = train_batch_size * this
@@ -124,8 +165,11 @@ training:
   # frozen and stores no activations to recompute. Lower per_device_train_batch_size instead.
   gradient_checkpointing: false
   report_to: "none"
-  # Two trainable blocks (92.4M params combined) against the same ~50k-sample dataset makes the
-  # overfitting risk layer_expand already flagged even more binding, not less.
+  # Two trainable blocks (~224.7M params combined: layer 24's 46.2M + layer 25's 178.5M at 3072d)
+  # against the same ~50k-sample dataset makes the overfitting risk layer_expand already flagged
+  # far more binding, not less -- ~45% of the model is now trainable, up from 9.4% for layer 24
+  # alone, and checkpoint-16000 (this run's own starting point) already showed overfitting
+  # signs at 46.2M trainable params (see README.md). Watch eval_loss from the first eval_steps.
   early_stopping: true
   early_stopping_patience: 5
   # See sft_layer_expand.yaml's note: 0.0 counts any decrease, however small, as improvement and

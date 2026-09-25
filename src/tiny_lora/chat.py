@@ -249,30 +249,16 @@ def load_chat_backend(
     base_model_name = base_model_override or resolve_adapter_base_model(adapter_path)
     tokenizer = load_adapter_tokenizer(adapter_path, base_model_name, trust_remote_code)
 
-    # A layer_expand run saves a whole expanded stack, not an adapter: there is no
-    # adapter_config.json and no set of low-rank deltas to apply to a base. A non-uniform stack
-    # additionally cannot be rebuilt from its own config.json -- the new block's width lives in
-    # the layer_expand.json sidecar -- so it has to go through layer_expand's own loader, which
-    # reconstructs the architecture and then loads the weights over it.
-    #
-    # Imported inside the function, not at module scope: layer_expand imports from tiny_lora, so
-    # a top-level import here would close the cycle. `resolve_adapter_base_model` above already
-    # reads the sidecar for the base model id by the same route.
-    from layer_expand.model import is_expanded_model_dir, load_expanded_model
-
-    if is_expanded_model_dir(adapter_path):
-        model = load_expanded_model(
-            adapter_path,
-            load_in_4bit=load_in_4bit,
-            trust_remote_code=trust_remote_code,
-        )
-    else:
-        model = load_peft_adapter(
-            base_model_name,
-            str(adapter_path),
-            load_in_4bit=load_in_4bit,
-            trust_remote_code=trust_remote_code,
-        )
+    # `load_peft_adapter` itself detects a layer_expand or layer_grow checkpoint (a whole saved
+    # stack, not an adapter -- there is no adapter_config.json, and a non-uniform stack cannot be
+    # rebuilt from its own config.json alone) and routes to the right loader; a plain PEFT
+    # adapter falls through to PeftModel.from_pretrained. One dispatch point, not duplicated here.
+    model = load_peft_adapter(
+        base_model_name,
+        str(adapter_path),
+        load_in_4bit=load_in_4bit,
+        trust_remote_code=trust_remote_code,
+    )
     model.eval()
 
     knowledge_store = load_knowledge_store(db_path) if db_path is not None else None
