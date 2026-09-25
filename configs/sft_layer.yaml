@@ -60,7 +60,7 @@ layer_grow:
   # whole outputs/sft-layer-expand-wide run) uploaded to Drive; leave it null to require the local
   # path to already exist.
   gdrive:
-    zip_file_id: null            # set to the Drive file id of a zipped checkpoint-16000
+    zip_file_id: 1Yi8pbGkmMEzwjRYqOskUyL0Z5cZBj0nX            # set to the Drive file id of a zipped checkpoint-16000
     # Same as previous_checkpoint above -- spelled out explicitly (matching training.gdrive.cache_dir's
     # style in sft_layer_expand.yaml) rather than left null-to-default, so a zip of just
     # checkpoint-16000's contents lands directly where a local run would have written it.
