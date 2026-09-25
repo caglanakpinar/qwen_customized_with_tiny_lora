@@ -505,33 +505,38 @@ and switches to a different file set and model card automatically -- no separate
 
 ## Benchmark Results
 
-Seven runs evaluated against the base model — six LoRA/TinyLoRA adapters plus one
-[`layer_expand`](configs/sft_layer_expand.yaml) run, which trains a whole appended transformer
-block rather than an adapter (see [`layer_expand_install.sh`](layer_expand_install.sh)). Raw
-numbers for runs 1-5 are in [`outputs/eval_results.json`](outputs/eval_results.json); runs 6 and 7
-exist only as the printed `eval.sh` table, not saved JSON. The five groups below do **not** share
+Eight runs evaluated against the base model — six LoRA/TinyLoRA adapters plus two
+[`layer_expand`](configs/sft_layer_expand.yaml) checkpoints, which train a whole appended
+transformer block rather than an adapter (see [`layer_expand_install.sh`](layer_expand_install.sh)).
+Raw numbers for runs 1-5 and 8 are in [`outputs/eval_results.json`](outputs/eval_results.json); runs
+6 and 7 exist only as the printed `eval.sh` table, not saved JSON. The groups below do **not** share
 an eval split: run 4 (`checkpoint-3200`) was scored after a newer generated dataset version —
 weighted toward code-generation tasks — was added, with different `num_eval_samples`/generation
 settings too (500 rows for run 4, an unrecorded count for 1-3); run 5 (`checkpoint-7500`, continued
 from `checkpoint-3200`) was scored against a rebuilt split again; run 6 (`checkpoint-16000`) again
-lands on a base row that matches neither; and run 7 (`layer_expand checkpoint-11200`) lands on a
-sixth base row again. The base model is frozen, so a base row that moves is proof the data moved.
-Each group is scored against its own base row — compare within a group, not across:
+lands on a base row that matches neither; run 7 (`layer_expand checkpoint-11200`) lands on a sixth
+base row again; and run 8 (`layer_expand checkpoint-16000`, a later checkpoint of the *same* run as
+run 7) lands on a seventh base row whose eval_loss/perplexity nearly match run 7's but whose
+rouge_l_f1/token_f1 don't quite — see the interpretation below. The base model is frozen, so a base
+row that moves is proof the data (or the generation sample) moved. Each group is scored against its
+own base row — compare within a group, not across:
 
-| Run | eval_loss | perplexity | rouge_l_f1 | token_f1 | code_valid_rate |
-|---|---|---|---|---|---|
-| base (runs 1-3) | 2.5823 | 13.2276 | 0.1086 | 0.2163 | 0.0385 |
-| 1. tiny_lora `checkpoint-5750` (run 1) | 1.8519 | 6.3720 | 0.0988 | 0.1629 | 0.2308 |
-| 2. tiny_lora `checkpoint-5750` (run 2) | **1.8114** | **6.1187** | 0.1183 | 0.1997 | 0.6538 |
-| 3. layer_lora `checkpoint-2750` | **1.2613** | **3.5300** | **0.1159** | **0.2284** | 0.1538 |
-| base (run 4) | 2.4269 | 11.3240 | 0.0755 | 0.1781 | 0.2667 |
-| 4. layer_lora `checkpoint-3200` | **1.4074** | **4.0852** | 0.0768 | 0.1802 | 0.0333 |
-| base (run 5) | 2.6143 | 13.6570 | 0.1109 | 0.2230 | 0.1154 |
-| 5. layer_lora `checkpoint-7500` | **1.3067** | **3.6939** | **0.1184** | **0.2361** | 0.1923 |
-| base (run 6) | 2.3818 | 10.8249 | 0.1960 | 0.2812 | 0.0000 |
-| 6. layer_lora `checkpoint-16000` | **0.5837** | **1.7926** | **0.2069** | **0.2853** | 0.0000 |
-| base (run 7) | 2.7433 | 15.5388 | 0.0974 | 0.2323 | 0.0667 |
-| 7. layer_expand `checkpoint-11200` | **0.0484** | **1.0496** | **0.6948** | **0.7014** | 0.2667 |
+| Run | eval_loss | perplexity | rouge_l_f1 | token_f1 | code_valid_rate | repetition_loop_rate |
+|---|---|---|---|---|---|---|
+| base (runs 1-3) | 2.5823 | 13.2276 | 0.1086 | 0.2163 | 0.0385 | — |
+| 1. tiny_lora `checkpoint-5750` (run 1) | 1.8519 | 6.3720 | 0.0988 | 0.1629 | 0.2308 | — |
+| 2. tiny_lora `checkpoint-5750` (run 2) | **1.8114** | **6.1187** | 0.1183 | 0.1997 | 0.6538 | — |
+| 3. layer_lora `checkpoint-2750` | **1.2613** | **3.5300** | **0.1159** | **0.2284** | 0.1538 | — |
+| base (run 4) | 2.4269 | 11.3240 | 0.0755 | 0.1781 | 0.2667 | — |
+| 4. layer_lora `checkpoint-3200` | **1.4074** | **4.0852** | 0.0768 | 0.1802 | 0.0333 | — |
+| base (run 5) | 2.6143 | 13.6570 | 0.1109 | 0.2230 | 0.1154 | — |
+| 5. layer_lora `checkpoint-7500` | **1.3067** | **3.6939** | **0.1184** | **0.2361** | 0.1923 | — |
+| base (run 6) | 2.3818 | 10.8249 | 0.1960 | 0.2812 | 0.0000 | — |
+| 6. layer_lora `checkpoint-16000` | **0.5837** | **1.7926** | **0.2069** | **0.2853** | 0.0000 | — |
+| base (run 7) | 2.7433 | 15.5388 | 0.0974 | 0.2323 | 0.0667 | — |
+| 7. layer_expand `checkpoint-11200` | **0.0484** | **1.0496** | **0.6948** | **0.7014** | 0.2667 | — |
+| base (run 8) | 2.7452 | 15.5682 | 0.0867 | 0.2094 | 0.0667 | 0.0000 |
+| 8. layer_expand `checkpoint-16000` | **0.0617** | **1.0636** | **0.4933** | **0.5394** | 0.0667 | 0.0000 |
 
 ### Interpretation
 
@@ -633,16 +638,40 @@ Each group is scored against its own base row — compare within a group, not ac
   as recorded, it is not comparable to the runs above it (different base row, different
   architecture: a trained dense block via
   [`layer_expand_install.sh`](layer_expand_install.sh), not an adapter merge).
+- **Run 8 (`checkpoint-16000`) is 4800 more steps of run 7's exact same run, and it did not improve.**
+  Same `output_dir` (`outputs/sft-layer-expand-wide`), same `max_steps: 20000` config, later
+  checkpoint. Teacher-forced eval_loss/perplexity are flat to slightly worse (0.0484/1.0496 at step
+  11200 → 0.0617/1.0636 at step 16000) despite the extra training, and the free-generation metrics
+  actually fell — rouge_l_f1 0.6948 → 0.4933, token_f1 0.7014 → 0.5394 — even measured against a base
+  row that barely moved on eval_loss/perplexity (2.7433/15.5388 → 2.7452/15.5682) though not on
+  rouge_l_f1/token_f1 (0.0974/0.2323 → 0.0867/0.2094), which is itself odd for a frozen model and is
+  most likely generation-sample variance (a different random subset of the 30 generated examples;
+  greedy decoding is deterministic *given* the same prompts) rather than a split rebuild, since the
+  loss-based numbers — which don't depend on which examples get generated — barely shifted at all.
+  Read at face value: **this is not the model improving.** A perplexity of ~1.06 was already flagged
+  at step 11200 as more consistent with near-verbatim memorization of the eval split than genuine
+  quality, and by step 16000 that same teacher-forced number hasn't moved while the
+  harder-to-memorize free-generation metrics got worse — the signature of a run that has already
+  passed its useful point and is now overfitting the training shards at the expense of generalizing
+  to the eval split's phrasing, not one still climbing. `code_valid_rate` (0.0667, tied with its own
+  base) and the new `repetition_loop_rate` (0.0000, tied with its own base) are both uninformative
+  here for the same small-sample reason flagged for run 6 above. Given run 7 was already the
+  "leakage check needed before trusting this" checkpoint, run 8 raises rather than settles that
+  concern — the leakage/overlap check called out for run 7 applies at least as strongly here, and
+  checkpoint-11200 (not 16000) currently looks like the better checkpoint of this run if
+  `layer_expand` is used at all, pending that check.
 - **Net takeaway:** for this dataset and model size, restricting a full-rank LoRA to a handful of
   late transformer layers (`layer_lora`) recovered more quality per training step than TinyLoRA's
-  extreme parameter budget did in these runs, and step 16000 is the strongest of the four on its own
-  base row — provisionally, pending the leakage check above, since its jump is larger than the trend
-  from the earlier three checkpoints would predict. `code_valid_rate` looked non-monotonic with more
-  steps, reversed sign at 7500, then tied at zero for 16000, so at 26-30 generation samples that
-  metric is too noisy to select checkpoints on — select on eval_loss (once verified clean of split
-  overlap), and confirm code behaviour on the 100-case smoke test rather than on the eval's
-  code-valid rate. `layer_expand`'s run 7 is excluded from this comparison pending its own,
-  more urgent leakage check above. This is a
+  extreme parameter budget did in these runs, and step 16000 (`layer_lora`) is the strongest of the
+  four on its own base row — provisionally, pending the leakage check above, since its jump is larger
+  than the trend from the earlier three checkpoints would predict. `code_valid_rate` looked
+  non-monotonic with more steps, reversed sign at 7500, then tied at zero for 16000, so at 26-30
+  generation samples that metric is too noisy to select checkpoints on — select on eval_loss (once
+  verified clean of split overlap), and confirm code behaviour on the 100-case smoke test rather than
+  on the eval's code-valid rate. `layer_expand`'s runs 7 and 8 are excluded from this comparison
+  pending their own, more urgent leakage check above — and between themselves, more training
+  (11200 → 16000 steps) made `layer_expand` look worse, not better, reinforcing that its current
+  numbers reflect overfitting rather than a checkpoint worth extending further. This is a
   specific-to-this-setup result, not a general claim about TinyLoRA — see the
   [TinyLoRA paper](https://arxiv.org/abs/2602.04118) for the regime (larger models, GRPO/RL) where
   its parameter efficiency is shown to pay off.

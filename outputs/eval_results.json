@@ -166,6 +166,42 @@
         "token_f1": 0.0131,
         "code_valid_rate": 0.0769
       }
+    },
+    {
+      "label": "layer_expand checkpoint-16000",
+      "note": "Later checkpoint of the same run as README's 'layer_expand checkpoint-11200' (run 7, not itself recorded here since it was only ever captured as a printed eval.sh table) -- same outputs/sft-layer-expand-wide run, same configs/sft_layer_expand.yaml (max_steps 20000), 4800 more steps. eval_loss/perplexity are essentially flat versus checkpoint-11200 (0.0484/1.0496 -> 0.0617/1.0636) despite the extra training, and rouge_l_f1/token_f1 fell (0.6948/0.7014 -> 0.4933/0.5394) even though the base row's own eval_loss/perplexity barely moved (2.7433/15.5388 -> 2.7452/15.5682); its rouge_l_f1/token_f1 did move somewhat (0.0974/0.2323 -> 0.0867/0.2094), most likely from a different random subset of generated examples rather than a split change, since the split-independent loss numbers held steady. Read together: this checkpoint is not an improvement over checkpoint-11200 -- flat teacher-forced loss plus falling free-generation metrics after more training is the signature of a run that has already overfit past its useful point, on top of the leakage/train-eval-overlap check already flagged for checkpoint-11200 given its own near-1.0 perplexity. code_valid_rate and the newly-added repetition_loop_rate both tie exactly with their own base row here, so neither is informative at this sample size.",
+      "method": "layer_expand",
+      "adapter": "outputs/sft-layer-expand-wide/checkpoint-16000",
+      "base_model": "Qwen/Qwen2.5-0.5B-Instruct",
+      "config": "configs/sft_layer_expand.yaml",
+      "eval_dataset": "data/synthetic/dataset/sft_eval.jsonl",
+      "results": {
+        "base": {
+          "eval_loss": 2.7452,
+          "perplexity": 15.5682,
+          "rouge_l_f1": 0.0867,
+          "token_f1": 0.2094,
+          "repetition_loop_rate": 0.0,
+          "code_valid_rate": 0.0667
+        },
+        "checkpoint": {
+          "eval_loss": 0.0617,
+          "perplexity": 1.0636,
+          "rouge_l_f1": 0.4933,
+          "token_f1": 0.5394,
+          "repetition_loop_rate": 0.0,
+          "code_valid_rate": 0.0667
+        }
+      },
+      "delta": {
+        "eval_loss": -2.6835,
+        "perplexity": -14.5046,
+        "perplexity_ratio": 0.0683,
+        "rouge_l_f1": 0.4066,
+        "token_f1": 0.33,
+        "repetition_loop_rate": 0.0,
+        "code_valid_rate": 0.0
+      }
     }
   ]
 }
