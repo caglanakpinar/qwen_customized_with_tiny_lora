@@ -51,7 +51,7 @@ layer_grow:
   # which case the latest weights are taken. Everything checkpoint-16000 already learned --
   # the merged TinyLoRA + layer_lora base, and the trained layer-24 block -- carries forward;
   # there is nothing to re-merge, unlike layer_expand's base_adapters.
-  previous_checkpoint: "outputs/sft-layer-expand-wide/checkpoint-16000"
+  previous_checkpoint: "outputs/sft-layer-expand-wide/checkpoint-2000"
 
   # Google Drive fallback for previous_checkpoint, used only when nothing usable is found at that
   # path locally -- e.g. a fresh machine that has not trained or downloaded
@@ -60,11 +60,11 @@ layer_grow:
   # whole outputs/sft-layer-expand-wide run) uploaded to Drive; leave it null to require the local
   # path to already exist.
   gdrive:
-    zip_file_id: 1Yi8pbGkmMEzwjRYqOskUyL0Z5cZBj0nX            # set to the Drive file id of a zipped checkpoint-16000
+    zip_file_id: 1HxeVe1Zj9O0ZIUPS8hMCscn5rKbiWuvD            # set to the Drive file id of a zipped checkpoint-16000
     # Same as previous_checkpoint above -- spelled out explicitly (matching training.gdrive.cache_dir's
     # style in sft_layer_expand.yaml) rather than left null-to-default, so a zip of just
     # checkpoint-16000's contents lands directly where a local run would have written it.
-    cache_dir: "outputs/sft-layer-expand-wide/checkpoint-16000"
+    cache_dir: "outputs/sft-layer-expand-wide/checkpoint-2000"
 
   # Position(s) this round's new block(s) take in the *final* stack, 0-based. checkpoint-16000 is
   # already 25 layers (0-23 base, 24 the first grown block), so [25] appends one more, giving 26.
@@ -116,7 +116,7 @@ data:
   max_samples: 50000            # cap on training rows read from the glob
   max_eval_samples: 500         # eval runs every eval_steps and scores this whole split each time
   gdrive:
-    zip_file_id: 1J4ZK6-tv9HKYFRVqNv7PzAkgZ9ezBFRF
+    zip_file_id: 1sHfgWM_1IlPwds06oOtlatbE9QU-QOoT
     cache_dir: "data/synthetic/dataset"
 
 training:
