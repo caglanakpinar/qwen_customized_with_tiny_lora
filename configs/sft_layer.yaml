@@ -51,7 +51,7 @@ layer_grow:
   # which case the latest weights are taken. Everything checkpoint-16000 already learned --
   # the merged TinyLoRA + layer_lora base, and the trained layer-24 block -- carries forward;
   # there is nothing to re-merge, unlike layer_expand's base_adapters.
-  previous_checkpoint: "outputs/sft-layer-expand-wide/checkpoint-2000"
+  previous_checkpoint: "outputs/sft-layer-expand-wide/checkpoint-16000"
 
   # Google Drive fallback for previous_checkpoint, used only when nothing usable is found at that
   # path locally -- e.g. a fresh machine that has not trained or downloaded
@@ -60,7 +60,7 @@ layer_grow:
   # whole outputs/sft-layer-expand-wide run) uploaded to Drive; leave it null to require the local
   # path to already exist.
   gdrive:
-    zip_file_id: 1HxeVe1Zj9O0ZIUPS8hMCscn5rKbiWuvD            # set to the Drive file id of a zipped checkpoint-16000
+    zip_file_id: 1Wj5a1Ib5_QrxHe6OsUCsPaj3tZ5qp0fO            # set to the Drive file id of a zipped checkpoint-16000
     # Same as previous_checkpoint above -- spelled out explicitly (matching training.gdrive.cache_dir's
     # style in sft_layer_expand.yaml) rather than left null-to-default, so a zip of just
     # checkpoint-16000's contents lands directly where a local run would have written it.
