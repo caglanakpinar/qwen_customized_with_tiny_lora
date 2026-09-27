@@ -139,6 +139,13 @@ _DATASET_FILE_PATTERNS = (
     "sft_eval.jsonl",
     "grpo_train-*.jsonl",
     "grpo_eval.jsonl",
+    # data/synthetic/math_word_problems.py and data_science_word_problems.py write their own
+    # stems rather than the plain "grpo_*" above -- see data_generator_grpo.sh -- so a zip of
+    # their output needs its own patterns here or a nested zip layout flattens to nothing.
+    "grpo_math_train-*.jsonl",
+    "grpo_math_eval.jsonl",
+    "grpo_diagnosis_train-*.jsonl",
+    "grpo_diagnosis_eval.jsonl",
 )
 
 
