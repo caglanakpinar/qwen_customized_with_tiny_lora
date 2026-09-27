@@ -477,6 +477,11 @@ REPO_ID=your-user/your-adapter \
 # a layer_expand checkpoint (whole merged model, not an adapter) -- detected automatically
 CHECKPOINT_DIR=outputs/sft-layer-expand-wide/checkpoint-13000 \
   TAG=v-layer-expand-wide bash upload_to_hf.sh
+
+# a layer_grow checkpoint (one or more rounds grown on top of a layer_expand run) --
+# also detected automatically, via layer_grow.json rather than layer_expand.json
+CHECKPOINT_DIR=outputs/sft-layer-grow/model \
+  TAG=v-layer-grow-round2 bash upload_to_hf.sh
 ```
 
 | Variable | Default | Description |
@@ -485,8 +490,11 @@ CHECKPOINT_DIR=outputs/sft-layer-expand-wide/checkpoint-13000 \
 | `CHECKPOINT_DIR` | `outputs/sft-ds-assistant/checkpoint-12000` | Local checkpoint to push. |
 | `TAG` | unset | Tag/revision name created for this commit. |
 
-`scripts/push_to_hub.py` detects a `layer_expand` checkpoint by its `layer_expand.json` sidecar
-and switches to a different file set and model card automatically -- no separate flag needed:
+`scripts/push_to_hub.py` detects the checkpoint type by which sidecar is present --
+`layer_grow.json` wins over `layer_expand.json` when both could apply, since
+`GrownCheckpointCallback` always writes its own sidecar (never a plain `layer_expand.json`, even
+for a checkpoint only one round deep) -- and switches to a different file set and model card
+automatically, no separate flag needed:
 
 - **Adapter checkpoints** (TinyLoRA, `layer_lora`) push `adapter_config.json` +
   `adapter_model.safetensors` + tokenizer files. The card documents rank/target-modules/etc. and
@@ -502,6 +510,15 @@ and switches to a different file set and model card automatically -- no separate
   [layer_expand's own note on why](configs/sft_layer_expand.yaml)). It also reports the
   checkpoint's real `trainer_state.json` step/eval_loss rather than trusting the checkpoint
   directory's number, since those can drift apart after a resumed run.
+- **`layer_grow` checkpoints** push the same file set as `layer_expand`, with `layer_grow.json` in
+  place of `layer_expand.json` -- same reasoning: no separate adapter, one self-contained model.
+  The card lists every round's block (position, shape, parameter count, which module built it) and
+  makes clear that `layer_grow` keeps *every* grown block trainable in each later round, not just
+  the newest -- unlike a plain `layer_expand` checkpoint, where only the block from that one round
+  was ever open to training. Usage goes through `layer_grow.model.load_grown_model` instead of
+  `layer_expand.model.load_expanded_model` (it falls back to reading a plain `layer_expand.json`
+  itself, so it also loads a checkpoint that has never been through `layer_grow` at all -- but the
+  reverse is not true, which is why detection checks `layer_grow.json` first).
 
 ## Benchmark Results
 
