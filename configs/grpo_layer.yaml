@@ -157,10 +157,14 @@ data:
 
 training:
   # A fresh directory, not outputs/sft-layer-grow: this run's checkpoints are a 28-layer stack, one
-  # more block than that run's 26 -- writing into the same dir would collide with
-  # check_growth_matches on the first save. Pointed at the external volume rather than the repo's
-  # own outputs/ so this run's checkpoints don't compete with local disk space.
-  output_dir: "outputs/sft-layer-grow"
+  # more block than that run's 27 -- writing into the same dir would collide with
+  # check_growth_matches on the first save (its sidecar already describes a 3-round/27-layer
+  # stack), and with save_total_limit's rotation, which sorts checkpoint-N by step number and
+  # would have to make sense of previous_checkpoint's own checkpoint-3750 sitting well past this
+  # run's max_steps. Training happens on an ephemeral box (Colab), so there is no "external
+  # volume" to point this at the way sft_layer.yaml's own comment does -- outputs/grpo-layer-grow,
+  # inside the repo's own outputs/, is enough to just not be outputs/sft-layer-grow.
+  output_dir: "outputs/grpo-layer-grow"
   num_train_epochs: 1          # max_steps overrides this
   max_steps: 2000
   per_device_train_batch_size: 2
@@ -172,8 +176,8 @@ training:
   # sampled-completion gradients -- so it's left unchanged here rather than lowered further.
   learning_rate: 1.0e-5
   max_prompt_length: 256
-  max_completion_length: 512
-  num_generations: 4           # completions sampled per prompt; GRPO's advantage baseline is their mean
+  max_completion_length: 128
+  num_generations: 2           # completions sampled per prompt; GRPO's advantage baseline is their mean
   logging_steps: 10
   save_steps: 100
   save_total_limit: 5          # keep only the most recent few
