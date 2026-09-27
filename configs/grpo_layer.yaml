@@ -1,0 +1,178 @@
+# Layer growth via GRPO: append one more transformer block on top of an already-expanded stack --
+# the same growth mechanics as sft_layer.yaml (splice in a block, keep every grown block trainable,
+# freeze only the original base) -- but instead of supervised fine-tuning on (prompt, answer)
+# pairs, this round reinforcement-learns the new block, and every earlier trainable one, against a
+# reward signal, using the same GRPOTrainer tiny_lora.train_grpo already drives for plain TinyLoRA
+# runs. See layer_grow/train_grpo.py's docstring for how the two share that trainer loop.
+#
+# Starting point is outputs/sft-layer-grow/checkpoint-3750: sft_layer.yaml's own run, currently a
+# 26-layer, 3-round stack -- NOT the 26-layer/2-round shape sft_layer.yaml's own header comment
+# describes (base 24 + layer 24 from sft_layer_expand.yaml + layer 25 from sft_layer.yaml). A
+# third round was grown at some point between checkpoint-2000 and this one -- checkpoint-3750's own
+# layer_grow.json records rounds [24] (layer_expand) then [25], [25] again (both layer_grow, both
+# 3072d/16640/48 heads), which is base_num_hidden_layers(24) + 3 grown blocks = 26 total layers
+# (config.json's own num_hidden_layers confirms 26), with what was trained as "layer 25" after
+# round 2 now sitting at index 26 after round 3 spliced a fresh block in ahead of it at index 25.
+# Worth checking sft_layer.yaml's own run history if that wasn't intentional -- growing from here
+# either way, since it's what previous_checkpoint actually resolves to.
+#
+# Named explicitly, like sft_layer.yaml names checkpoint-16000, rather than pointed at the bare run
+# directory -- sft_layer.yaml's training.save_total_limit: 5 rotates older checkpoints out as new
+# ones are saved, so "whatever the run has reached" would silently change which weights this round
+# grows from as sft_layer.yaml keeps training in the background; pin a specific checkpoint-N here
+# and bump it by hand (or via --previous-checkpoint) when a later one is worth growing from
+# instead. As of this writing checkpoint-3750 is not the newest (sft_layer.yaml targets
+# max_steps: 20000 and is still running), so growing now means growing on top of an *unfinished*
+# SFT round -- every earlier block keeps training underneath this round's own trainable tail either
+# way (freeze_all_growth leaves it open, see layer_grow/model.py), so that is a choice to make
+# deliberately, not a bug to fix.
+#
+# This round appends layer 26, inheriting the newest block's own shape (see the hardcoded shape
+# fields below, confirmed directly from checkpoint-3750's own weights) rather than widening
+# further -- there's no evidence yet that this stack needs to get wider before it's worth teaching
+# it to reason better with what it already has.
+#
+# layer_grow.reward_set picks which reward functions from layer_grow/rewards.py score completions:
+#   "math"      (default) GSM8K-shaped arithmetic word problems -- `#### <number>`,
+#               `<<a op b = c>>` steps. Matches correctness_reward/reasoning_step_reward/
+#               calculation_accuracy_reward in tiny_lora/rewards.py.
+#   "diagnosis" data/synthetic/data_science_word_problems.py's overfitting/underfitting cases --
+#               `#### overfitting` / `#### underfitting`. Matches diagnosis_reward.
+# The two sets are not interchangeable against the wrong data: format_reward and
+# calculation_accuracy_reward always score 0 against a diagnosis label, and diagnosis_reward always
+# scores 0 against a numeric one -- see layer_grow/rewards.py for why they're kept separate rather
+# than merged into one list.
+#
+# Build the dataset first (see data: below for why reader: "gdrive" needs it present locally
+# regardless of gdrive.zip_file_id on this machine):
+#     python -m data.synthetic.math_word_problems --count 20000 --eval-records 2000
+# or, with reward_set: "diagnosis" instead:
+#     python -m data.synthetic.data_science_word_problems --count 5000 --eval-records 500
+#
+# Then:
+#     poetry run layer_grow grpo --config configs/grpo_layer.yaml --no-quant
+#
+# or, since this is the default config, just:
+#     poetry run layer_grow grpo --no-quant
+#
+# Grow a different shape/position, or switch reward sets and dataset, per-run without editing this
+# file:
+#     poetry run layer_grow grpo --layers 28 --reward-set diagnosis \
+#         --previous-checkpoint outputs/grpo-layer-grow
+
+model:
+  model_name_or_path: "Qwen/Qwen2.5-0.5B-Instruct"  # base model pulled from the Hugging Face Hub
+  load_in_4bit: false          # full bf16; `--no-quant` forces this off regardless
+  torch_dtype: "auto"          # let transformers pick the dtype the checkpoint was saved in
+  trust_remote_code: false     # Qwen2.5 ships standard modeling code; no custom code needed
+  attn_implementation: null    # let transformers pick (e.g. sdpa); set "flash_attention_2" where supported
+
+layer_grow:
+  # sft_layer.yaml's own run, pinned to a specific checkpoint -- see the header comment above for
+  # why this isn't left pointed at the bare run directory.
+  previous_checkpoint: "outputs/sft-layer-grow/checkpoint-3750"
+
+  # Google Drive fallback for previous_checkpoint, same reasoning as sft_layer.yaml's. Nothing
+  # uploaded yet as of this writing -- outputs/sft-layer-grow is still mid-run locally -- so this
+  # is a placeholder to fill in once checkpoint-3750 (or whichever checkpoint previous_checkpoint
+  # is bumped to) is worth sharing across machines. cache_dir matches previous_checkpoint exactly,
+  # same reasoning as sft_layer.yaml's own cache_dir note, so a zip of just that checkpoint's
+  # contents lands directly where a local run would have written it.
+  gdrive:
+    zip_file_id: 1W8IPqyGxwjKiTyiwVfgS77q48edsTYvI
+    cache_dir: "outputs/sft-layer-grow/checkpoint-3750"
+
+  # Position this round's new block takes in the *final* stack, 0-based. previous_checkpoint is
+  # already 26 layers (0-23 base, 24/25 grown -- see the header comment above for why that's 3
+  # blocks, not 2), so [26] appends one more, giving 26.
+  layers: [26]
+
+  # Hardcoded to layer 26's own shape rather than left null -- confirmed directly from
+  # checkpoint-3750/model.safetensors's tensor shapes, not just the layer_grow.json sidecar:
+  # model.layers.26.in_proj.weight is [3072, 896] (hidden_size 3072, base_hidden_size 896),
+  # inner.mlp.down_proj.weight is [3072, 16640] (intermediate_size 16640), inner.self_attn.
+  # q_proj.weight is [3072, 3072] and k_proj.weight is [128, 3072] -- 3072/64 = 48 attention heads
+  # and 128/64 = 2 key/value heads at this stack's fixed head_dim of 64 (cross-checked against the
+  # base model's own unwrapped layer 23: q_proj is [896, 896], 896/64 = 14, matching Qwen2.5-0.5B's
+  # published num_attention_heads). Same values null would have inherited via
+  # layer_grow.model.resolve_growth_shape -- spelled out explicitly so this round's shape doesn't
+  # silently change if a future previous_checkpoint's newest block ever has a different one.
+  hidden_size: 3072
+  intermediate_size: 16640
+  num_attention_heads: 48
+  num_key_value_heads: 2
+
+  # "identity" zeroes this round's block's output projections, so it starts as a residual
+  # passthrough and GRPO moves it away from exactly what previous_checkpoint already does, rather
+  # than injecting noise -- and rather than a sampled-completion reward gradient's first few
+  # updates landing on a block that starts at random weights. Same reasoning as sft_layer.yaml.
+  init: "identity"
+  init_std: 0.02
+
+  # "auto" continues *this round* from <training.output_dir>/model if a previous attempt at it
+  # already finished, otherwise builds a fresh block for layer 26.
+  init_from_checkpoint: "auto"
+
+  # See the header comment above for what this picks and why "math" vs "diagnosis" aren't mixed.
+  reward_set: "math"
+
+data:
+  # Same pattern as sft_layer.yaml's own data: block: "gdrive" downloads a zip into gdrive.cache_dir
+  # and extracts it there first, then dataset_name is read exactly like a local path -- so once
+  # downloaded, this behaves identically to reader: "local" pointed at the same glob.
+  #
+  # dataset_name points at data/synthetic/math_word_problems.py's own output shape (grpo_math_*),
+  # which matches reward_set: "math" above -- `<<a op b = c>>` steps and a trailing
+  # `#### <number>`, the exact shape correctness_reward/reasoning_step_reward/
+  # calculation_accuracy_reward expect. Build it locally first:
+  #     python -m data.synthetic.math_word_problems --count 20000 --eval-records 2000
+  # then zip data/synthetic/dataset/ and upload it, and set gdrive.zip_file_id below to that zip's
+  # Drive file id, for a fresh machine that has never built or downloaded this dataset itself.
+  #
+  # gdrive.zip_file_id is left null here on purpose: cache_dir (data/synthetic/dataset) already
+  # holds sft_layer.yaml's own SFT shards on this machine, and ensure_gdrive_dataset skips the
+  # download entirely once cache_dir is non-empty -- "already populated" is checked by "has any
+  # files in it," not "has grpo_math_*.jsonl specifically" -- regardless of what zip_file_id is
+  # set to. So on this machine the null is never even consulted; it only matters once this config
+  # is used somewhere data/synthetic/dataset doesn't already exist. If grpo_math_train-*.jsonl
+  # itself hasn't been built yet by the time training runs, the glob in load_raw_dataset finds no
+  # matches and raises immediately -- fails fast either way, just not via zip_file_id.
+  #
+  # No eval_dataset_name here, unlike sft_layer.yaml's data: block -- tiny_lora.train_grpo has no
+  # eval loop at all currently (prepare_grpo_dataset builds only a train split; run_grpo_core never
+  # passes GRPOTrainer an eval_dataset), so setting one would just be silently unused.
+  reader: "gdrive"
+  dataset_name: "/Volumes/PS2000W/ds-assistant-grpo/grpo_math_train-*.jsonl"
+  max_samples: 20000
+  gdrive:
+    zip_file_id: 14RGS7eXPs2sGWOTRKlb3teWTANLjRB7W            # set to the Drive file id of the zipped dataset once uploaded
+    cache_dir: "/Volumes/PS2000W/ds-assistant-grpo"
+
+training:
+  # A fresh directory, not outputs/sft-layer-grow: this run's checkpoints are a 28-layer stack, one
+  # more block than that run's 26 -- writing into the same dir would collide with
+  # check_growth_matches on the first save. Pointed at the external volume rather than the repo's
+  # own outputs/ so this run's checkpoints don't compete with local disk space.
+  output_dir: "/Volumes/PS2000W/ds-assistant-grpo"
+  num_train_epochs: 1          # max_steps overrides this
+  max_steps: 2000
+  per_device_train_batch_size: 2
+  gradient_accumulation_steps: 8
+  # Cautious, same reasoning sft_layer.yaml gives its own learning_rate versus
+  # sft_layer_expand.yaml's: every earlier block already has real, trained weights by the time this
+  # round starts, so a peak LR sized for nudging a fresh block off zero would overshoot them. GRPO's
+  # own default (grpo_default.yaml) is already this low for a different reason -- noisy,
+  # sampled-completion gradients -- so it's left unchanged here rather than lowered further.
+  learning_rate: 1.0e-5
+  max_prompt_length: 256
+  max_completion_length: 512
+  num_generations: 4           # completions sampled per prompt; GRPO's advantage baseline is their mean
+  logging_steps: 10
+  save_steps: 100
+  save_total_limit: 5          # keep only the most recent few
+  bf16: true
+  # Off, same reasoning as sft_layer.yaml: every layer before the trainable tail is frozen and
+  # stores no activations to recompute -- checkpointing here would pay a recompute cost for memory
+  # that was never allocated. Lower per_device_train_batch_size instead if this OOMs.
+  gradient_checkpointing: false
+  report_to: "none"
