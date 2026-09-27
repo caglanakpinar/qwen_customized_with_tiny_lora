@@ -101,6 +101,16 @@ def run_grpo_core(
         remove_unused_columns=False,
     )
 
+    # trl==0.14.0's GRPOTrainer.__init__ does `model.warnings_issued["estimate_tokens"] = True`
+    # unconditionally, expecting `PreTrainedModel.__init__` to have already set that dict --
+    # true in the transformers 4.x trl==0.14.0 was written against, but transformers 5.15.0
+    # (confirmed: `grep -r warnings_issued` over its whole source turns up nothing) dropped the
+    # attribute entirely along with whatever warning-suppression system used it. Same shape of
+    # incompatibility as the vllm one above: trl reaching for something transformers no longer
+    # has. Setting it here, rather than patching trl, keeps the fix local to us.
+    if not hasattr(model, "warnings_issued"):
+        model.warnings_issued = {}
+
     trainer = GRPOTrainer(
         model=model,
         args=training_args,
