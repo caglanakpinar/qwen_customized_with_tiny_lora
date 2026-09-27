@@ -43,11 +43,11 @@
 # scores 0 against a numeric one -- see layer_grow/rewards.py for why they're kept separate rather
 # than merged into one list.
 #
-# Build the dataset first (see data: below for why reader: "gdrive" needs it present locally
-# regardless of gdrive.zip_file_id on this machine):
-#     python -m data.synthetic.math_word_problems --count 20000 --eval-records 2000
-# or, with reward_set: "diagnosis" instead:
-#     python -m data.synthetic.data_science_word_problems --count 5000 --eval-records 500
+# Build the dataset first (see data: below -- reader: "local" reads it straight from
+# OUT_DIR, no gdrive involved):
+#     OUT_DIR=/Volumes/PS2000W/ds-assistant-grpo bash data_generator_grpo.sh
+# which runs both math_word_problems.py (reward_set: "math") and data_science_word_problems.py
+# (reward_set: "diagnosis") in one pass; STAGES=math or STAGES=diagnosis builds just one.
 #
 # Then:
 #     poetry run layer_grow grpo --config configs/grpo_layer.yaml --no-quant
@@ -117,26 +117,27 @@ layer_grow:
   reward_set: "math"
 
 data:
-  # Same pattern as sft_layer.yaml's own data: block: "gdrive" downloads a zip into gdrive.cache_dir
-  # and extracts it there first, then dataset_name is read exactly like a local path -- so once
-  # downloaded, this behaves identically to reader: "local" pointed at the same glob.
+  # reader: "gdrive" -- this config runs on a training machine that does not have this dataset
+  # built locally, so ensure_gdrive_dataset downloads gdrive.zip_file_id (ds-assistant-grpo.zip,
+  # built on the Mac via data_generator_grpo.sh and uploaded from there) into gdrive.cache_dir and
+  # extracts it there first, then dataset_name is read exactly like a local path pointed at the
+  # same glob. cache_dir here is just a plain path on the training machine -- nothing macOS- or
+  # /Volumes-specific about it there, it only happens to match the Mac's own path for convenience.
+  #
+  # That download only happens once: ensure_gdrive_dataset skips it on every later run once
+  # cache_dir is non-empty ("already populated" is checked by "has any files in it," not "has
+  # grpo_math_*.jsonl specifically"), so a second `layer_grow grpo` on the same training machine
+  # reads the already-extracted shards straight off disk.
   #
   # dataset_name points at data/synthetic/math_word_problems.py's own output shape (grpo_math_*),
   # which matches reward_set: "math" above -- `<<a op b = c>>` steps and a trailing
   # `#### <number>`, the exact shape correctness_reward/reasoning_step_reward/
-  # calculation_accuracy_reward expect. Build it locally first:
-  #     python -m data.synthetic.math_word_problems --count 20000 --eval-records 2000
-  # then zip data/synthetic/dataset/ and upload it, and set gdrive.zip_file_id below to that zip's
-  # Drive file id, for a fresh machine that has never built or downloaded this dataset itself.
-  #
-  # gdrive.zip_file_id is left null here on purpose: cache_dir (data/synthetic/dataset) already
-  # holds sft_layer.yaml's own SFT shards on this machine, and ensure_gdrive_dataset skips the
-  # download entirely once cache_dir is non-empty -- "already populated" is checked by "has any
-  # files in it," not "has grpo_math_*.jsonl specifically" -- regardless of what zip_file_id is
-  # set to. So on this machine the null is never even consulted; it only matters once this config
-  # is used somewhere data/synthetic/dataset doesn't already exist. If grpo_math_train-*.jsonl
-  # itself hasn't been built yet by the time training runs, the glob in load_raw_dataset finds no
-  # matches and raises immediately -- fails fast either way, just not via zip_file_id.
+  # calculation_accuracy_reward expect. Rebuild/refresh it on the Mac via:
+  #     OUT_DIR=/Volumes/PS2000W/ds-assistant-grpo bash data_generator_grpo.sh
+  # which runs both math_word_problems.py (reward_set: "math") and data_science_word_problems.py
+  # (reward_set: "diagnosis") in one pass; STAGES=math or STAGES=diagnosis builds just one. Re-zip
+  # and re-upload afterward, and bump gdrive.zip_file_id below to the new zip's Drive file id --
+  # the training machine's cache_dir is only re-populated by a fresh download if it's emptied first.
   #
   # No eval_dataset_name here, unlike sft_layer.yaml's data: block -- tiny_lora.train_grpo has no
   # eval loop at all currently (prepare_grpo_dataset builds only a train split; run_grpo_core never
@@ -145,15 +146,15 @@ data:
   dataset_name: "/Volumes/PS2000W/ds-assistant-grpo/grpo_math_train-*.jsonl"
   max_samples: 20000
   gdrive:
-    zip_file_id: 14RGS7eXPs2sGWOTRKlb3teWTANLjRB7W            # set to the Drive file id of the zipped dataset once uploaded
-    cache_dir: "/Volumes/PS2000W/ds-assistant-grpo"
+    zip_file_id: 14RGS7eXPs2sGWOTRKlb3teWTANLjRB7W            # ds-assistant-grpo.zip, built via data_generator_grpo.sh
+    cache_dir: "data/synthetic/dataset"
 
 training:
   # A fresh directory, not outputs/sft-layer-grow: this run's checkpoints are a 28-layer stack, one
   # more block than that run's 26 -- writing into the same dir would collide with
   # check_growth_matches on the first save. Pointed at the external volume rather than the repo's
   # own outputs/ so this run's checkpoints don't compete with local disk space.
-  output_dir: "/Volumes/PS2000W/ds-assistant-grpo"
+  output_dir: "outputs/sft-layer-grow"
   num_train_epochs: 1          # max_steps overrides this
   max_steps: 2000
   per_device_train_batch_size: 2
