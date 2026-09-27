@@ -6,6 +6,22 @@ from pathlib import Path
 from typing import Callable
 
 from transformers import TrainerCallback
+
+# `trl.trainer.grpo_trainer` does `if is_vllm_available(): from vllm import LLM, SamplingParams`
+# at module import time (confirmed directly against the trl==0.14.0 wheel from PyPI -- a
+# universal py3-none-any build, identical on every platform, so this isn't a Linux/Colab-only
+# copy). `is_vllm_available()` is just `_vllm_available`, a module-level bool trl.import_utils
+# computes once via `importlib.util.find_spec("vllm") is not None` the first time it's imported
+# in a process. Seen on a Colab box: that check reports vllm present even though `import vllm`
+# itself then raises "No module named 'vllm'" moments later in the very same process -- crashing
+# this whole import before training starts. We never call GRPOConfig(use_vllm=...) anywhere in
+# this codebase, so trl's vllm-backed generation path is never exercised regardless of whether
+# vllm is actually installed; forcing the flag off here (before trl's own submodules import,
+# so nothing has consumed the stale True yet) sidesteps whatever makes that detection unreliable
+# on some machines, without patching trl itself.
+import trl.import_utils
+
+trl.import_utils._vllm_available = False
 from trl import GRPOConfig, GRPOTrainer
 
 from tiny_lora.config import (
