@@ -35,6 +35,7 @@ from layer_grow.model import (
 )
 from tiny_lora.config import (
     DataConfig,
+    GRPOTrainingConfig,
     ModelConfig,
     SFTTrainingConfig,
     _flatten_data_config,
@@ -63,11 +64,15 @@ class GrownCheckpointCallback(TrainerCallback):
         stamp_config(checkpoint, self.wrapped)
 
 
-def _guard_checkpoint_rotation(grow_cfg: LayerGrowConfig, training_cfg: SFTTrainingConfig) -> None:
+def _guard_checkpoint_rotation(
+    grow_cfg: LayerGrowConfig, training_cfg: SFTTrainingConfig | GRPOTrainingConfig
+) -> None:
     """Refuse to start if checkpoint rotation would delete the checkpoint being continued from.
 
     Same guard as layer_expand's own: `save_total_limit` does not know that
-    `init_from_checkpoint` names one of the checkpoints it might rotate away.
+    `init_from_checkpoint` names one of the checkpoints it might rotate away. Shared with
+    `layer_grow.train_grpo`, which reuses this as-is -- the check only touches `output_dir`/
+    `save_total_limit`, which both training configs have.
     """
     spec = grow_cfg.init_from_checkpoint
     if spec is None or spec.strip().lower() in ("none", "off", "") or spec.strip().lower() == "auto":
@@ -89,10 +94,10 @@ def _guard_checkpoint_rotation(grow_cfg: LayerGrowConfig, training_cfg: SFTTrain
     )
 
 
-def _warn_about_gradient_checkpointing(training_cfg: SFTTrainingConfig) -> None:
+def _warn_about_gradient_checkpointing(training_cfg: SFTTrainingConfig | GRPOTrainingConfig) -> None:
     """Same non-savings layer_expand warns about: every layer before the trainable tail is
     frozen, so those layers store no activations to begin with -- checkpointing pays the
-    recompute for memory that was never allocated."""
+    recompute for memory that was never allocated. Shared with `layer_grow.train_grpo`."""
     if training_cfg.gradient_checkpointing:
         warnings.warn(
             "training.gradient_checkpointing is on. Layer growth freezes only the base, so "
