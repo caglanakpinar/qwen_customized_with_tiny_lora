@@ -139,11 +139,17 @@ data:
   # and re-upload afterward, and bump gdrive.zip_file_id below to the new zip's Drive file id --
   # the training machine's cache_dir is only re-populated by a fresh download if it's emptied first.
   #
+  # dataset_name must live under gdrive.cache_dir below, not the Mac's own
+  # /Volumes/PS2000W/ds-assistant-grpo -- load_raw_dataset globs dataset_name literally (see
+  # tiny_lora/data.py), it never resolves it relative to cache_dir. The Mac's own runs use
+  # reader: "local" (see data_generator_grpo.sh's own note) with that absolute path instead; this
+  # "gdrive" block is only ever read on a machine that just extracted the zip into cache_dir.
+  #
   # No eval_dataset_name here, unlike sft_layer.yaml's data: block -- tiny_lora.train_grpo has no
   # eval loop at all currently (prepare_grpo_dataset builds only a train split; run_grpo_core never
   # passes GRPOTrainer an eval_dataset), so setting one would just be silently unused.
   reader: "gdrive"
-  dataset_name: "/Volumes/PS2000W/ds-assistant-grpo/grpo_math_train-*.jsonl"
+  dataset_name: "data/synthetic/dataset/grpo_math_train-*.jsonl"
   max_samples: 20000
   gdrive:
     zip_file_id: 14RGS7eXPs2sGWOTRKlb3teWTANLjRB7W            # ds-assistant-grpo.zip, built via data_generator_grpo.sh
