@@ -1,19 +1,22 @@
 #!/usr/bin/env bash
 #
-# Install the repo and grow an already-expanded stack by one more transformer block, fine-tuning
-# it *together with* every block grown before it.
+# Install the repo and grow an already-expanded stack by one more transformer block, training it
+# *together with* every block grown before it -- by supervised fine-tuning (the default) or, with
+# MODE=grpo, by reinforcement learning instead.
 #
 #     curl -fsSL https://raw.githubusercontent.com/caglanakpinar/qwen_customized_with_tiny_lora/main/layer_grow_install.sh | bash
 #
 # or, from a copy of this file:
 #
 #     bash layer_grow_install.sh
+#     MODE=grpo bash layer_grow_install.sh
 #
 # The layer_grow counterpart to layer_expand_install.sh: same clone/install/dataset preamble, but
-# the run at the end is `layer_grow sft` against configs/sft_layer.yaml, which starts from a
+# the run at the end is `layer_grow sft` against configs/sft_layer.yaml (MODE=sft, the default) or
+# `layer_grow grpo` against configs/grpo_layer.yaml (MODE=grpo) -- either way starting from a
 # *finished* layer_expand/layer_grow checkpoint (PREVIOUS_CHECKPOINT) rather than the stock base
-# model -- there is no "grow the stock base" case, unlike layer_expand's base_adapters, which can
-# be empty. Unlike layer_expand (which freezes everything except the block it just added),
+# model, since there is no "grow the stock base" case, unlike layer_expand's base_adapters, which
+# can be empty. Unlike layer_expand (which freezes everything except the block it just added),
 # layer_grow leaves every block any earlier round added trainable too, alongside the new one --
 # only the original base stays frozen. See layer_grow/model.py's own docstring for why.
 #
@@ -31,9 +34,14 @@
 #     HIDDEN_SIZE=4608 NUM_HEADS=72 INTERMEDIATE_SIZE=24960 bash layer_grow_install.sh
 #
 # Environment overrides:
+#     MODE                  sft | grpo -- which subcommand and       (default: sft)
+#                           default config (configs/{MODE}_layer.yaml) to run
+#     REWARD_SET            math | diagnosis -- reward functions     (default: unset -- the config's
+#                           to score completions with (MODE=grpo       layer_grow.reward_set, "math")
+#                           only; see layer_grow/rewards.py)
 #     REPO_DIR             where to clone to                       (default: ./qwen_customized_with_tiny_lora,
 #                                                                     skipped entirely when run from inside a checkout)
-#     CONFIG                training config to run                  (default: configs/sft_layer.yaml)
+#     CONFIG                training config to run                  (default: configs/${MODE}_layer.yaml)
 #     PREVIOUS_CHECKPOINT   finished layer_expand/layer_grow        (default: unset -- the config's
 #                           checkpoint (or its run dir) to grow       previous_checkpoint)
 #                           from -- required one way or another
@@ -64,7 +72,12 @@ set -euo pipefail
 
 REPO_URL="https://github.com/caglanakpinar/qwen_customized_with_tiny_lora.git"
 REPO_DIR="${REPO_DIR:-qwen_customized_with_tiny_lora}"
-CONFIG="${CONFIG:-configs/sft_layer.yaml}"
+MODE="${MODE:-sft}"
+if [ "$MODE" != "sft" ] && [ "$MODE" != "grpo" ]; then
+  echo "==> Unknown MODE: $MODE (expected 'sft' or 'grpo')" >&2
+  exit 1
+fi
+CONFIG="${CONFIG:-configs/${MODE}_layer.yaml}"
 
 # Running this from inside an existing checkout must not clone a second copy underneath it --
 # that is how a nested qwen_customized_with_tiny_lora/ ends up shadowing the real one. Detect the
@@ -102,7 +115,7 @@ echo "==> Installing dependencies (with the gdrive extra)"
 poetry install -E gdrive
 
 # Assemble the training command now so SKIP_TRAIN can print exactly what it skipped.
-args=(sft --config "$CONFIG")
+args=("$MODE" --config "$CONFIG")
 [ -n "${PREVIOUS_CHECKPOINT:-}" ] && args+=(--previous-checkpoint "$PREVIOUS_CHECKPOINT")
 [ -n "${LAYERS:-}" ] && args+=(--layers "$LAYERS")
 [ -n "${HIDDEN_SIZE:-}" ] && args+=(--hidden-size "$HIDDEN_SIZE")
@@ -111,6 +124,9 @@ args=(sft --config "$CONFIG")
 [ -n "${NUM_KV_HEADS:-}" ] && args+=(--num-key-value-heads "$NUM_KV_HEADS")
 [ -n "${INIT:-}" ] && args+=(--init "$INIT")
 [ -n "${INIT_CHECKPOINT:-}" ] && args+=(--init-from-checkpoint "$INIT_CHECKPOINT")
+# --reward-set only exists on the grpo subcommand; guarded by MODE so an sft run never sees an
+# option it doesn't have.
+[ -n "${REWARD_SET:-}" ] && [ "$MODE" = "grpo" ] && args+=(--reward-set "$REWARD_SET")
 [ -n "${OUTPUT_DIR:-}" ] && args+=(--output-dir "$OUTPUT_DIR")
 [ -n "${MAX_STEPS:-}" ] && args+=(--max-steps "$MAX_STEPS")
 [ -n "${LEARNING_RATE:-}" ] && args+=(--learning-rate "$LEARNING_RATE")
@@ -135,6 +151,8 @@ fi
 echo "==> Preparing dataset for $CONFIG"
 poetry run python -c "
 import sys
+from pathlib import Path
+
 from tiny_lora.config import DataConfig, _flatten_data_config, _merge_dataclass, load_yaml_config
 from tiny_lora.data import ensure_gdrive_dataset
 
@@ -145,15 +163,23 @@ if data_cfg.reader != 'gdrive':
     sys.exit(0)
 
 cache_dir = ensure_gdrive_dataset(data_cfg.gdrive_cache_dir, data_cfg.gdrive_zip_file_id)
-shards = sorted(cache_dir.glob('sft_train-*.jsonl'))
+# The pattern's own basename, not a hardcoded 'sft_train-*.jsonl' -- MODE=grpo's dataset_name is
+# 'grpo_math_train-*.jsonl', 'grpo_diagnosis_train-*.jsonl', or a literal filename, none of which
+# that SFT-specific glob would ever match.
+pattern = Path(data_cfg.dataset_name).name
+shards = sorted(cache_dir.glob(pattern))
 if not shards:
     sys.exit(
-        f'no sft_train-*.jsonl in {cache_dir} after extraction -- check data.gdrive.zip_file_id '
-        f'in $CONFIG points at a dataset zip, not something else'
+        f'no files matching {pattern!r} in {cache_dir} after extraction -- check '
+        f'data.gdrive.zip_file_id in $CONFIG points at a dataset zip, not something else'
     )
 print(f'    {len(shards)} shard(s) ready in {cache_dir}')
 "
 
 echo "==> Growing the stack with $CONFIG"
-echo "    the original base stays frozen; every block any round has grown -- old and new -- trains"
+if [ "$MODE" = "grpo" ]; then
+  echo "    the original base stays frozen; every block any round has grown -- old and new -- is reinforcement-learned"
+else
+  echo "    the original base stays frozen; every block any round has grown -- old and new -- trains"
+fi
 poetry run layer_grow "${args[@]}"
