@@ -114,6 +114,49 @@ fi
 echo "==> Installing dependencies (with the gdrive extra)"
 poetry install -E gdrive
 
+# ---------------------------------------------------------------------------
+# Clear a stray "vllm": trl's GRPOTrainer module only does `from vllm import LLM,
+# SamplingParams` when transformers' is_vllm_available() (importlib.util.find_spec('vllm')
+# is not None) says yes -- our own GRPOConfig never sets use_vllm, so we never want vllm
+# and never installed it via pyproject.toml. Seen on a Colab box: find_spec('vllm')
+# resolves to *something* (no vllm anywhere in this run's own pip install log, so it is
+# either a leftover from an earlier session on that box, or a stray empty namespace-package
+# directory some other install left on sys.path) even though `import vllm` itself then
+# raises "No module named 'vllm'" -- which crashes `from trl import GRPOTrainer` before
+# training ever starts, regardless of MODE. Runs every time, not just after a failure: it is
+# cheap, a no-op when nothing stray is present, and this is the only point before the
+# training command where it is safe to remove a directory that might be sitting under this
+# venv's site-packages.
+# ---------------------------------------------------------------------------
+echo "==> Checking for a stray vllm (trl's GRPOTrainer import guard only wants it absent)"
+poetry run python3 -c "
+import importlib.util
+import shutil
+import subprocess
+import sys
+
+
+def check():
+    return importlib.util.find_spec('vllm')
+
+
+spec = check()
+if spec is None:
+    print('    no vllm spec found -- nothing to clear')
+else:
+    print(f'    find_spec(\"vllm\"): origin={spec.origin} locations={spec.submodule_search_locations}')
+    subprocess.run([sys.executable, '-m', 'pip', 'uninstall', '-y', 'vllm'], capture_output=True)
+    spec = check()
+    if spec is not None:
+        # Survived a pip uninstall -- not a package pip tracks via dist-info/RECORD, so this
+        # is the stray-namespace-directory case: remove the directory(ies) directly.
+        for loc in spec.submodule_search_locations or []:
+            print(f'    removing stray namespace dir: {loc}')
+            shutil.rmtree(loc, ignore_errors=True)
+        spec = check()
+    print(f'    vllm spec after cleanup: {spec}')
+"
+
 # Assemble the training command now so SKIP_TRAIN can print exactly what it skipped.
 args=("$MODE" --config "$CONFIG")
 [ -n "${PREVIOUS_CHECKPOINT:-}" ] && args+=(--previous-checkpoint "$PREVIOUS_CHECKPOINT")
