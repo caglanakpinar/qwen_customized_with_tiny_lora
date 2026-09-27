@@ -135,6 +135,9 @@ class SFTTrainingConfig:
 class GRPOTrainingConfig:
     output_dir: str = "outputs/grpo"
     num_train_epochs: int = 1
+    # -1 (the HF Trainer default) means "no cap, run the full num_train_epochs" -- mirrors
+    # SFTTrainingConfig.max_steps.
+    max_steps: int = -1
     per_device_train_batch_size: int = 2
     gradient_accumulation_steps: int = 8
     learning_rate: float = 1e-5
@@ -143,9 +146,16 @@ class GRPOTrainingConfig:
     num_generations: int = 4
     logging_steps: int = 1
     save_steps: int = 100
+    # Cap on checkpoint directories kept on disk; mirrors SFTTrainingConfig.save_total_limit.
+    save_total_limit: int | None = None
     bf16: bool = True
     gradient_checkpointing: bool = True
     report_to: str = "none"
+    # Google Drive fallback for an interrupted run, used only when output_dir has no usable
+    # checkpoint of its own -- mirrors SFTTrainingConfig.gdrive_zip_file_id/gdrive_cache_dir; see
+    # `train_sft.resolve_resume_checkpoint`, which `train_grpo.run_grpo_core` reuses as-is.
+    gdrive_zip_file_id: str | None = None
+    gdrive_cache_dir: str | None = None
 
 
 @dataclass

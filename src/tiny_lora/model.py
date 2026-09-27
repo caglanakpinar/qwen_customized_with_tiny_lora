@@ -108,6 +108,7 @@ def build_tinylora_config(cfg: TinyLoraConfig):
         init_weights=cfg.init_weights,
         init_v_bound=cfg.init_v_bound,
         tinylora_dropout=cfg.tinylora_dropout,
+        task_type="CAUSAL_LM",
     )
 
 
