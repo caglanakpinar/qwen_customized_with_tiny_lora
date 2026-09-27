@@ -5,6 +5,20 @@ from __future__ import annotations
 import re
 
 
+def _completion_text(completion: str | list[dict]) -> str:
+    """Normalize one entry of `completions` to plain text.
+
+    Our math/diagnosis datasets store `prompt` as a chat-message list (see
+    data/synthetic/math_word_problems.py's own docstring), so trl.GRPOTrainer treats the whole
+    dataset as conversational and generates completions in that same shape: `list[list[dict]]`
+    (one assistant-role message dict per completion), not `list[str]`. Every reward function
+    below is written against plain text, so this is the one place that shape gets collapsed.
+    """
+    if isinstance(completion, list):
+        return completion[-1]["content"]
+    return completion
+
+
 def extract_gsm8k_answer(text: str) -> str | None:
     match = re.search(r"####\s*(-?\d[\d,]*\.?\d*)", text)
     if match:
@@ -16,7 +30,7 @@ def extract_gsm8k_answer(text: str) -> str | None:
 def correctness_reward(completions: list[str], answer: list[str], **kwargs) -> list[float]:
     rewards = []
     for completion, gold in zip(completions, answer, strict=True):
-        pred = extract_gsm8k_answer(completion)
+        pred = extract_gsm8k_answer(_completion_text(completion))
         gold_val = extract_gsm8k_answer(gold)
         rewards.append(1.0 if pred is not None and pred == gold_val else 0.0)
     return rewards
@@ -38,7 +52,7 @@ def diagnosis_reward(completions: list[str], answer: list[str], **kwargs) -> lis
     """
     rewards = []
     for completion, gold in zip(completions, answer, strict=True):
-        pred = extract_label_answer(completion)
+        pred = extract_label_answer(_completion_text(completion))
         gold_label = extract_label_answer(gold)
         rewards.append(1.0 if pred is not None and pred == gold_label else 0.0)
     return rewards
@@ -46,7 +60,9 @@ def diagnosis_reward(completions: list[str], answer: list[str], **kwargs) -> lis
 
 def format_reward(completions: list[str], **kwargs) -> list[float]:
     pattern = r".*?\s*.*?####\s*-?\d"
-    return [0.25 if re.search(pattern, c, re.DOTALL) else 0.0 for c in completions]
+    return [
+        0.25 if re.search(pattern, _completion_text(c), re.DOTALL) else 0.0 for c in completions
+    ]
 
 
 def length_reward(
@@ -57,7 +73,7 @@ def length_reward(
 ) -> list[float]:
     rewards = []
     for completion in completions:
-        length = len(completion.split())
+        length = len(_completion_text(completion).split())
         if length < min_len:
             rewards.append(-0.1)
         elif length > max_len:
@@ -102,7 +118,7 @@ def reasoning_step_reward(
     """
     rewards = []
     for completion in completions:
-        steps = len(_EQUATION_PATTERN.findall(completion))
+        steps = len(_EQUATION_PATTERN.findall(_completion_text(completion)))
         rewards.append(reward_per_step * min(steps, max_steps))
     return rewards
 
@@ -121,7 +137,7 @@ def calculation_accuracy_reward(
     """
     rewards = []
     for completion in completions:
-        matches = _EQUATION_PATTERN.findall(completion)
+        matches = _EQUATION_PATTERN.findall(_completion_text(completion))
         if not matches:
             rewards.append(0.0)
             continue
@@ -149,7 +165,7 @@ def repetition_penalty_reward(
     """
     rewards = []
     for completion in completions:
-        lines = [line.strip() for line in completion.splitlines() if line.strip()]
+        lines = [line.strip() for line in _completion_text(completion).splitlines() if line.strip()]
         if len(lines) < 2:
             rewards.append(0.0)
             continue
