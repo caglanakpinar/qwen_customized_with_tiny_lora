@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from typing import Callable
 
 
 def _completion_text(completion: str | list[dict]) -> str:
@@ -83,11 +84,31 @@ def length_reward(
     return rewards
 
 
+# Every spelling of an operator a model writes in practice, mapped to what it computes. Qwen
+# instruct models often write multiplication as `×` or LaTeX `\times`/`\cdot` rather than `*`, and
+# an ASCII-only pattern scores those steps as if they were never shown.
+_OPERATORS = {
+    "+": lambda a, b: a + b,
+    "-": lambda a, b: a - b,
+    "−": lambda a, b: a - b,
+    "*": lambda a, b: a * b,
+    "×": lambda a, b: a * b,
+    "·": lambda a, b: a * b,
+    "x": lambda a, b: a * b,
+    r"\times": lambda a, b: a * b,
+    r"\cdot": lambda a, b: a * b,
+    "/": lambda a, b: a / b,
+    "÷": lambda a, b: a / b,
+    r"\div": lambda a, b: a / b,
+}
+
 # `a op b = c`, e.g. "12 + 5 = 17" -- how GSM8K-style solutions work a chain of arithmetic.
 # Matched literally rather than via prose connectives ("then", "so") since those don't reliably
 # mark a real reasoning step and vary too much in phrasing to count on.
 _EQUATION_PATTERN = re.compile(
-    r"(-?\d[\d,]*\.?\d*)\s*([+\-*/])\s*(-?\d[\d,]*\.?\d*)\s*=\s*(-?\d[\d,]*\.?\d*)"
+    r"(-?\d[\d,]*\.?\d*)\s*("
+    + "|".join(re.escape(op) for op in sorted(_OPERATORS, key=len, reverse=True))
+    + r")\s*(-?\d[\d,]*\.?\d*)\s*=\s*(-?\d[\d,]*\.?\d*)"
 )
 
 
@@ -96,13 +117,7 @@ def _parse_number(token: str) -> float:
 
 
 def _eval_step(left: str, symbol: str, right: str) -> float:
-    ops = {
-        "+": lambda a, b: a + b,
-        "-": lambda a, b: a - b,
-        "*": lambda a, b: a * b,
-        "/": lambda a, b: a / b,
-    }
-    return ops[symbol](_parse_number(left), _parse_number(right))
+    return _OPERATORS[symbol](_parse_number(left), _parse_number(right))
 
 
 def reasoning_step_reward(
@@ -172,3 +187,37 @@ def repetition_penalty_reward(
         duplicate_ratio = 1 - len(set(lines)) / len(lines)
         rewards.append(penalty * duplicate_ratio)
     return rewards
+
+
+def make_sample_printer(num_samples: int, every: int) -> Callable:
+    """Build a reward function that scores nothing but prints what the policy is generating.
+
+    trl==0.14.0's GRPOTrainer has no option to show completions, and the per-function reward
+    means it logs can say a reward never fires without saying why. This rides along in
+    `reward_funcs`, always returning 0.0 so it never moves the summed reward or the advantages,
+    and prints the first prompt of a batch, its gold answer, and `num_samples` of that prompt's
+    completions (trl keeps one prompt's generations adjacent) on the first call and every
+    `every`-th call after it. It shows up in the logs as `rewards/print_samples`, always 0.
+    """
+    calls = 0
+
+    def print_samples(
+        completions: list, prompts: list | None = None, answer: list[str] | None = None, **kwargs
+    ) -> list[float]:
+        nonlocal calls
+        calls += 1
+        if (calls - 1) % every == 0:
+            lines = [f"\n===== sample completions (reward call {calls}) ====="]
+            if prompts:
+                lines.append(f"PROMPT: {_completion_text(prompts[0])}")
+            if answer:
+                lines.append(f"GOLD:   {answer[0]!r}")
+            for i, completion in enumerate(completions[:num_samples], start=1):
+                text = _completion_text(completion)
+                lines.append(f"--- completion {i}/{num_samples} ({len(text.split())} words) ---")
+                lines.append(text)
+            lines.append("=" * 50)
+            print("\n".join(lines), flush=True)
+        return [0.0] * len(completions)
+
+    return print_samples
