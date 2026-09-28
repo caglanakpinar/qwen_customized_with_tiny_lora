@@ -38,6 +38,7 @@ from tiny_lora.rewards import (
     correctness_reward,
     format_reward,
     length_reward,
+    make_sample_printer,
     reasoning_step_reward,
     repetition_penalty_reward,
 )
@@ -110,6 +111,17 @@ def run_grpo_core(
     # has. Setting it here, rather than patching trl, keeps the fix local to us.
     if not hasattr(model, "warnings_issued"):
         model.warnings_issued = {}
+
+    # trl==0.14.0 calls every reward function once per micro-batch, so logging_steps *
+    # gradient_accumulation_steps calls is one print per logged metrics line.
+    if train_cfg.print_samples > 0:
+        reward_funcs = [
+            *reward_funcs,
+            make_sample_printer(
+                train_cfg.print_samples,
+                every=train_cfg.logging_steps * train_cfg.gradient_accumulation_steps,
+            ),
+        ]
 
     trainer = GRPOTrainer(
         model=model,
