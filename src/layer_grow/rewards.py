@@ -47,6 +47,32 @@ REWARD_SETS: dict[str, list[Callable]] = {
 
 DEFAULT_REWARD_SET = "math"
 
+# The math prompts only ask for the answer after '####'; nothing asks for the `a op b = c` steps
+# reasoning_step_reward/calculation_accuracy_reward score, and a stack SFT'd as a data-science tutor
+# never produced one on its own (both scored 0 for a whole run). GRPO can only reinforce what
+# some sampled completion already does, so the format is spelled out here, with one worked example.
+# The example itself is 37 words, under length_reward's 50-word floor (-0.1): that's small next to
+# correctness/format/step rewards (up to +1.85), so it's left as the tradeoff rather than padded.
+# "diagnosis" prompts already end with their own '####' instruction and have no step rewards.
+MATH_SYSTEM_PROMPT = """\
+You solve arithmetic word problems step by step. For each step, write one short sentence saying \
+what you compute, then the calculation on its own line as `a op b = c`, using plain numbers and \
+one of + - * /. After the last step, write the final number on its own line after '####'.
+
+Example problem: Mia has 12 apples. She buys 6 more, then shares all of them equally among 3 \
+friends. How many apples does each friend get?
+Example answer:
+Mia starts with 12 apples and buys 6 more, so she has:
+12 + 6 = 18
+She shares the 18 apples equally among 3 friends, so each friend gets:
+18 / 3 = 6
+#### 6"""
+
+SYSTEM_PROMPTS: dict[str, str | None] = {
+    "math": MATH_SYSTEM_PROMPT,
+    "diagnosis": None,
+}
+
 
 def resolve_reward_funcs(name: str) -> list[Callable]:
     try:
