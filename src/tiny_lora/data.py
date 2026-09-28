@@ -319,13 +319,29 @@ def prepare_grpo_dataset(data_cfg: DataConfig, dataset_name: str | None = None) 
     dataset = load_raw_dataset(data_cfg, dataset_name=dataset_name)
 
     if "gsm8k" in (dataset_name or data_cfg.dataset_name):
-        return dataset.map(
+        dataset = dataset.map(
             format_gsm8k_grpo,
             remove_columns=dataset.column_names,
         )
-    if "prompt" in dataset.column_names:
-        return _drop_metadata(dataset)
-    raise ValueError(
-        f"Unsupported dataset for GRPO: {dataset_name or data_cfg.dataset_name}. "
-        "Provide a dataset with a 'prompt' column or use openai/gsm8k."
-    )
+    elif "prompt" in dataset.column_names:
+        dataset = _drop_metadata(dataset)
+    else:
+        raise ValueError(
+            f"Unsupported dataset for GRPO: {dataset_name or data_cfg.dataset_name}. "
+            "Provide a dataset with a 'prompt' column or use openai/gsm8k."
+        )
+    if data_cfg.system_prompt:
+        dataset = _with_system_prompt(dataset, data_cfg.system_prompt)
+    return dataset
+
+
+def _with_system_prompt(dataset: Dataset, system_prompt: str) -> Dataset:
+    """Lead every conversational `prompt` with `system_prompt`, replacing any system message."""
+    if not isinstance(dataset[0]["prompt"], list):
+        raise ValueError("data.system_prompt needs chat-message prompts, not plain-text ones.")
+
+    def add(example: dict) -> dict:
+        messages = [m for m in example["prompt"] if m["role"] != "system"]
+        return {"prompt": [{"role": "system", "content": system_prompt}, *messages]}
+
+    return dataset.map(add)
