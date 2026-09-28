@@ -55,6 +55,10 @@ class DataConfig:
     # Where the zip is extracted to. Downloaded once and reused on later runs if already
     # populated, so dataset_name/eval_dataset_name should point inside this directory.
     gdrive_cache_dir: str = "data/synthetic/dataset"
+    # GRPO only: a system message put in front of every prompt (replacing any the dataset carries)
+    # when the dataset is loaded, so the answer format the reward functions score can be spelled
+    # out without rebuilding the dataset. SFT datasets carry their own system messages already.
+    system_prompt: str | None = None
 
 
 @dataclass
@@ -151,6 +155,9 @@ class GRPOTrainingConfig:
     bf16: bool = True
     gradient_checkpointing: bool = True
     report_to: str = "none"
+    # Completions printed to stdout once per logging_steps (0 = off) -- see
+    # `rewards.make_sample_printer`. The only way to see *why* a reward never fires mid-run.
+    print_samples: int = 0
     # Google Drive fallback for an interrupted run, used only when output_dir has no usable
     # checkpoint of its own -- mirrors SFTTrainingConfig.gdrive_zip_file_id/gdrive_cache_dir; see
     # `train_sft.resolve_resume_checkpoint`, which `train_grpo.run_grpo_core` reuses as-is.
