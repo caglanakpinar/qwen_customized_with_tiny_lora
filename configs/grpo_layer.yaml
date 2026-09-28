@@ -79,7 +79,7 @@ layer_grow:
   # same reasoning as sft_layer.yaml's own cache_dir note, so a zip of just that checkpoint's
   # contents lands directly where a local run would have written it.
   gdrive:
-    zip_file_id: 1W8IPqyGxwjKiTyiwVfgS77q48edsTYvI
+    zip_file_id: 18edzBlAqXcHoTA5XRjBCNtVD8ViwngWf
     cache_dir: "outputs/sft-layer-grow/checkpoint-3750"
 
   # Position this round's new block takes in the *final* stack, 0-based. previous_checkpoint is
@@ -179,7 +179,7 @@ training:
   max_completion_length: 128
   num_generations: 2           # completions sampled per prompt; GRPO's advantage baseline is their mean
   logging_steps: 10
-  save_steps: 100
+  save_steps: 50
   save_total_limit: 5          # keep only the most recent few
   bf16: true
   # Off, same reasoning as sft_layer.yaml: every layer before the trainable tail is frozen and
