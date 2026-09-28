@@ -26,7 +26,7 @@ from layer_grow.model import (
     read_growth_spec,
     stamp_config,
 )
-from layer_grow.rewards import DEFAULT_REWARD_SET, resolve_reward_funcs
+from layer_grow.rewards import DEFAULT_REWARD_SET, SYSTEM_PROMPTS, resolve_reward_funcs
 from layer_grow.train_sft import (
     GrownCheckpointCallback,
     _guard_checkpoint_rotation,
@@ -61,7 +61,12 @@ def run_grpo_from_yaml(config_path: str | Path, overrides: dict | None = None) -
     # the same reason CLI overrides write it into the `layer_grow` dict alongside `layers`/
     # `hidden_size` rather than needing separate override plumbing.
     grow_cfg = _merge_dataclass(LayerGrowConfig(), _flatten_data_config(raw.get("layer_grow", {})))
-    reward_funcs = resolve_reward_funcs(raw.get("layer_grow", {}).get("reward_set", DEFAULT_REWARD_SET))
+    reward_set = raw.get("layer_grow", {}).get("reward_set", DEFAULT_REWARD_SET)
+    reward_funcs = resolve_reward_funcs(reward_set)
+    # The system prompt follows the reward set, so `--reward-set` switches both together; an
+    # explicit `data.system_prompt` (null included, to turn it off) wins over the set's default.
+    if "system_prompt" not in raw.get("data", {}):
+        data_cfg.system_prompt = SYSTEM_PROMPTS[reward_set]
 
     _guard_checkpoint_rotation(grow_cfg, training_cfg)
     _warn_about_gradient_checkpointing(training_cfg)
