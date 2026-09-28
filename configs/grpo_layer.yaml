@@ -58,7 +58,7 @@
 # Grow a different shape/position, or switch reward sets and dataset, per-run without editing this
 # file:
 #     poetry run layer_grow grpo --layers 28 --reward-set diagnosis \
-#         --previous-checkpoint outputs/grpo-layer-grow
+#         --previous-checkpoint outputs/grpo-layer-grow-run2
 
 model:
   model_name_or_path: "Qwen/Qwen2.5-0.5B-Instruct"  # base model pulled from the Hugging Face Hub
@@ -114,6 +114,10 @@ layer_grow:
   init_from_checkpoint: "auto"
 
   # See the header comment above for what this picks and why "math" vs "diagnosis" aren't mixed.
+  # The set also picks the system prompt (layer_grow/rewards.py's SYSTEM_PROMPTS): "math" spells
+  # out the `a op b = c` steps + `#### <number>` format its rewards score, with a worked example --
+  # the first run without it scored 0 on format/reasoning_step/calculation_accuracy for 270 steps.
+  # Set data.system_prompt to override it (null turns it off).
   reward_set: "math"
 
 data:
@@ -164,10 +168,17 @@ training:
   # run's max_steps. Training happens on an ephemeral box (Colab), so there is no "external
   # volume" to point this at the way sft_layer.yaml's own comment does -- outputs/grpo-layer-grow,
   # inside the repo's own outputs/, is enough to just not be outputs/sft-layer-grow.
-  output_dir: "outputs/grpo-layer-grow"
+  #
+  # "-run2", not outputs/grpo-layer-grow: that dir holds the first run's checkpoints (stopped at
+  # ~step 270, see reward_set's note), and with no finished <output_dir>/model to continue from,
+  # run_grpo_core resumes the newest checkpoint-N it finds there -- weights, optimizer and step
+  # count from a run with a different batch shape and no system prompt.
+  output_dir: "outputs/grpo-layer-grow-run2"
   num_train_epochs: 1          # max_steps overrides this
   max_steps: 2000
-  per_device_train_batch_size: 2
+  # In trl==0.14.0 this counts *prompts*, each expanded into num_generations completions -- 1 x 4
+  # keeps each micro-batch at 4 completions, as 2 x 2 did, and 8 prompts / 32 completions per step.
+  per_device_train_batch_size: 1
   gradient_accumulation_steps: 8
   # Cautious, same reasoning sft_layer.yaml gives its own learning_rate versus
   # sft_layer_expand.yaml's: every earlier block already has real, trained weights by the time this
@@ -175,10 +186,20 @@ training:
   # own default (grpo_default.yaml) is already this low for a different reason -- noisy,
   # sampled-completion gradients -- so it's left unchanged here rather than lowered further.
   learning_rate: 1.0e-5
-  max_prompt_length: 256
-  max_completion_length: 128
-  num_generations: 2           # completions sampled per prompt; GRPO's advantage baseline is their mean
+  # trl truncates prompts from the *left*, so an over-long one silently loses its system prompt
+  # first. Measured with the real tokenizer: math prompts plus the "math" system prompt reach 284
+  # tokens (v1 and v2 generators alike), past the 256 this used to be.
+  max_prompt_length: 384
+  # Was 128: completions averaged ~120 tokens, nearly all cut off before the closing '####' line.
+  max_completion_length: 256
+  # Completions sampled per prompt; GRPO's advantage is each one's reward relative to the group.
+  # Was 2: with two, any difference at all normalizes to +/-0.707, so a 49- vs 50-word length
+  # penalty pushed as hard as right vs wrong, and a reward neither sample earns adds no gradient.
+  num_generations: 4
   logging_steps: 10
+  # Completions printed per logging_steps (0 = off) -- see tiny_lora/rewards.py's
+  # make_sample_printer. Logged as rewards/print_samples, always 0; it never touches the reward.
+  print_samples: 2
   save_steps: 50
   save_total_limit: 5          # keep only the most recent few
   bf16: true
