@@ -145,6 +145,15 @@ class GRPOTrainingConfig:
     per_device_train_batch_size: int = 2
     gradient_accumulation_steps: int = 8
     learning_rate: float = 1e-5
+    # Optimizer steps spent ramping the LR up from 0 -- mirrors SFTTrainingConfig.warmup_steps,
+    # and for the same reason: HF's default of 0 puts the very first step at the full peak LR,
+    # where AdamW moves every trainable scalar by ~learning_rate regardless of gradient size.
+    warmup_steps: int = 0
+    # Weight of the KL penalty that pulls the policy back toward the frozen reference model (a
+    # copy of the model as it was when training started). 0.04 is trl==0.14.0's own default.
+    # In that trl version the logged `loss` is exactly beta * `kl` -- the reward term's value is
+    # always ~0 -- so raise this when `kl` climbs fast while rewards stay near zero.
+    beta: float = 0.04
     max_prompt_length: int = 256
     max_completion_length: int = 512
     num_generations: int = 4
