@@ -171,20 +171,26 @@ def calculation_accuracy_reward(
 def repetition_penalty_reward(
     completions: list[str],
     penalty: float = -0.2,
+    ngram_size: int = 3,
     **kwargs,
 ) -> list[float]:
-    """Penalize completions that pad length by repeating the same line instead of reasoning.
+    """Penalize completions that pad length by repeating text instead of reasoning.
 
-    Once `length_reward` rewards longer completions, repeating a sentence becomes a cheap way
-    to farm that reward without adding any new reasoning -- this counters that shortcut.
+    Once `length_reward` rewards longer completions, repeating content becomes a cheap way to
+    farm that reward without adding any new reasoning -- this counters that shortcut. Scored
+    over word n-grams across the whole completion rather than whole-line duplicates, so a
+    collapsed completion that pads itself out inside one unbroken paragraph -- "text text text
+    text..." with no line breaks at all -- is caught too, not just a repeated line: splitting on
+    newlines would see that as a single "line" and skip it entirely.
     """
     rewards = []
     for completion in completions:
-        lines = [line.strip() for line in _completion_text(completion).splitlines() if line.strip()]
-        if len(lines) < 2:
+        words = _completion_text(completion).split()
+        if len(words) < ngram_size + 1:
             rewards.append(0.0)
             continue
-        duplicate_ratio = 1 - len(set(lines)) / len(lines)
+        ngrams = [tuple(words[i : i + ngram_size]) for i in range(len(words) - ngram_size + 1)]
+        duplicate_ratio = 1 - len(set(ngrams)) / len(ngrams)
         rewards.append(penalty * duplicate_ratio)
     return rewards
 
