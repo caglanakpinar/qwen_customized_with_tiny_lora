@@ -46,25 +46,19 @@ model:
   attn_implementation: null    # let transformers pick (e.g. sdpa); set "flash_attention_2" where supported
 
 layer_grow:
-  # The finished layer_expand (or layer_grow) checkpoint this round grows from. A directory
-  # holding layer_expand.json/layer_grow.json directly, or the run directory containing one, in
-  # which case the latest weights are taken. Everything checkpoint-16000 already learned --
-  # the merged TinyLoRA + layer_lora base, and the trained layer-24 block -- carries forward;
-  # there is nothing to re-merge, unlike layer_expand's base_adapters.
-  previous_checkpoint: "outputs/sft-layer-expand-wide/checkpoint-16000"
+  # sft_layer.yaml's own run, pinned to a specific checkpoint -- see the header comment above for
+  # why this isn't left pointed at the bare run directory.
+  previous_checkpoint: "outputs/sft-layer-grow/checkpoint-3750"
 
-  # Google Drive fallback for previous_checkpoint, used only when nothing usable is found at that
-  # path locally -- e.g. a fresh machine that has not trained or downloaded
-  # outputs/sft-layer-expand-wide itself yet. Mirrors data.gdrive/training.gdrive above and in
-  # sft_layer_expand.yaml. Set zip_file_id to a zip of checkpoint-16000's contents (or of the
-  # whole outputs/sft-layer-expand-wide run) uploaded to Drive; leave it null to require the local
-  # path to already exist.
+  # Google Drive fallback for previous_checkpoint, same reasoning as sft_layer.yaml's. Nothing
+  # uploaded yet as of this writing -- outputs/sft-layer-grow is still mid-run locally -- so this
+  # is a placeholder to fill in once checkpoint-3750 (or whichever checkpoint previous_checkpoint
+  # is bumped to) is worth sharing across machines. cache_dir matches previous_checkpoint exactly,
+  # same reasoning as sft_layer.yaml's own cache_dir note, so a zip of just that checkpoint's
+  # contents lands directly where a local run would have written it.
   gdrive:
-    zip_file_id: 1Wj5a1Ib5_QrxHe6OsUCsPaj3tZ5qp0fO            # set to the Drive file id of a zipped checkpoint-16000
-    # Same as previous_checkpoint above -- spelled out explicitly (matching training.gdrive.cache_dir's
-    # style in sft_layer_expand.yaml) rather than left null-to-default, so a zip of just
-    # checkpoint-16000's contents lands directly where a local run would have written it.
-    cache_dir: "outputs/sft-layer-expand-wide/checkpoint-2000"
+    zip_file_id: 18edzBlAqXcHoTA5XRjBCNtVD8ViwngWf
+    cache_dir: "outputs/sft-layer-grow/checkpoint-3750"
 
   # Position(s) this round's new block(s) take in the *final* stack, 0-based. checkpoint-16000 is
   # already 25 layers (0-23 base, 24 the first grown block), so [25] appends one more, giving 26.
@@ -116,7 +110,7 @@ data:
   max_samples: 50000            # cap on training rows read from the glob
   max_eval_samples: 500         # eval runs every eval_steps and scores this whole split each time
   gdrive:
-    zip_file_id: 1sHfgWM_1IlPwds06oOtlatbE9QU-QOoT
+    zip_file_id: 1S68pV_1mDVjVNVNpFfhBEvX7S2ecmJsI
     cache_dir: "data/synthetic/dataset"
 
 training:
