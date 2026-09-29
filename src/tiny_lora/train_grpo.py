@@ -90,6 +90,8 @@ def run_grpo_core(
         per_device_train_batch_size=train_cfg.per_device_train_batch_size,
         gradient_accumulation_steps=train_cfg.gradient_accumulation_steps,
         learning_rate=train_cfg.learning_rate,
+        warmup_steps=train_cfg.warmup_steps,
+        beta=train_cfg.beta,
         max_prompt_length=train_cfg.max_prompt_length,
         max_completion_length=train_cfg.max_completion_length,
         num_generations=train_cfg.num_generations,
