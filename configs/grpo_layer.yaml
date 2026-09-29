@@ -186,6 +186,14 @@ training:
   # own default (grpo_default.yaml) is already this low for a different reason -- noisy,
   # sampled-completion gradients -- so it's left unchanged here rather than lowered further.
   learning_rate: 1.0e-5
+  # Was 0 (HF's default), which put the very first step at the full peak LR: at ~step 10 `kl` was
+  # already 3.8 against a reference that was identical to the policy at step 1. 50 is 2.5% of
+  # max_steps. Only takes effect on a fresh run -- resuming a checkpoint-N restores its scheduler.
+  warmup_steps: 50
+  # KL penalty weight (trl==0.14.0 default 0.04), raised because that run's `kl` of 3.8 came from
+  # a reward signal that was almost all noise (mean reward 0.017). In this trl version the logged
+  # `loss` is exactly beta * `kl`, so expect `loss` to scale with this too.
+  beta: 0.1
   # trl truncates prompts from the *left*, so an over-long one silently loses its system prompt
   # first. Measured with the real tokenizer: math prompts plus the "math" system prompt reach 284
   # tokens (v1 and v2 generators alike), past the 256 this used to be.
