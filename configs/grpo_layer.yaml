@@ -43,13 +43,16 @@
 # scores 0 against a numeric one -- see layer_grow/rewards.py for why they're kept separate rather
 # than merged into one list.
 #
-# Build the dataset first (see data: below -- reader: "local" reads it straight from
-# OUT_DIR, no gdrive involved):
-#     OUT_DIR=/Volumes/PS2000W/ds-assistant-grpo bash data_generator_grpo.sh
-# which runs both math_word_problems.py (reward_set: "math") and data_science_word_problems.py
-# (reward_set: "diagnosis") in one pass; STAGES=math or STAGES=diagnosis builds just one.
+# Build the dataset first. data: below now points at the v2 set (see that block's own comment):
+#     OUT_DIR=/Volumes/PS2000W/ds-assistant-grpo-v2 FORMATS=grpo bash data_generate_v2.sh
+# which writes grpo_train-*.jsonl / grpo_eval.jsonl straight into OUT_DIR via build_v2.py --
+# whole end-to-end / alternative-model / metric-diagnosis code tasks plus the identity and
+# knowledge-base catalogues, NOT math_word_problems.py's/data_science_word_problems.py's
+# `#### <number>` / `#### overfitting` shape. See the REWARD MISMATCH note in data: below before
+# training against it -- reward_set: "math" (still the default here) scores 0 on every example of
+# this set as of this writing.
 #
-# Then:
+# Then, once the zip below is rebuilt and re-uploaded (data: block):
 #     poetry run layer_grow grpo --config configs/grpo_layer.yaml --no-quant
 #
 # or, since this is the default config, just:
@@ -125,42 +128,67 @@ layer_grow:
   reward_set: "math"
 
 data:
-  # reader: "gdrive" -- this config runs on a training machine that does not have this dataset
-  # built locally, so ensure_gdrive_dataset downloads gdrive.zip_file_id (ds-assistant-grpo.zip,
-  # built on the Mac via data_generator_grpo.sh and uploaded from there) into gdrive.cache_dir and
-  # extracts it there first, then dataset_name is read exactly like a local path pointed at the
-  # same glob. cache_dir here is just a plain path on the training machine -- nothing macOS- or
-  # /Volumes-specific about it there, it only happens to match the Mac's own path for convenience.
+  # reader: "gdrive" -- this config runs on a training machine (Colab) that has no access to the
+  # Mac's /Volumes/PS2000W, so ensure_gdrive_dataset fetches the dataset zip into gdrive.cache_dir
+  # and extracts it there first, then dataset_name is read exactly like a local path pointed at
+  # the same glob. cache_dir here is just a plain path on the training machine -- nothing macOS-
+  # or /Volumes-specific about it there.
   #
-  # That download only happens once: ensure_gdrive_dataset skips it on every later run once
-  # cache_dir is non-empty ("already populated" is checked by "has any files in it," not "has
-  # grpo_math_*.jsonl specifically"), so a second `layer_grow grpo` on the same training machine
+  # gdrive.mount_path (preferred) vs gdrive.zip_file_id: `ensure_gdrive_dataset`
+  # (tiny_lora/data.py) tries mount_path first when set. zip_file_id goes through gdown's
+  # anonymous public-link download, which turned out to be unreliable for a file this size --
+  # "Too many users have viewed or downloaded this file recently" on two different, essentially
+  # unviewed files in a row (see tiny_lora/gdrive.py's module docstring); that's Google's abuse
+  # heuristic reacting to the request pattern (scripted, cookie-less, >100MB), not real
+  # popularity. mount_path instead has Colab mount the account's own Drive
+  # (google.colab.drive.mount) and reads the file authenticated as its owner, same as a browser
+  # download, which sidesteps that heuristic entirely.
+  #
+  # That fetch only happens once: ensure_gdrive_dataset skips it on every later run once cache_dir
+  # is non-empty ("already populated" is checked by "has any files in it," not "has
+  # grpo_train-*.jsonl specifically"), so a second `layer_grow grpo` on the same training machine
   # reads the already-extracted shards straight off disk.
   #
-  # dataset_name points at data/synthetic/math_word_problems.py's own output shape (grpo_math_*),
-  # which matches reward_set: "math" above -- `<<a op b = c>>` steps and a trailing
-  # `#### <number>`, the exact shape correctness_reward/reasoning_step_reward/
-  # calculation_accuracy_reward expect. Rebuild/refresh it on the Mac via:
-  #     OUT_DIR=/Volumes/PS2000W/ds-assistant-grpo bash data_generator_grpo.sh
-  # which runs both math_word_problems.py (reward_set: "math") and data_science_word_problems.py
-  # (reward_set: "diagnosis") in one pass; STAGES=math or STAGES=diagnosis builds just one. Re-zip
-  # and re-upload afterward, and bump gdrive.zip_file_id below to the new zip's Drive file id --
-  # the training machine's cache_dir is only re-populated by a fresh download if it's emptied first.
+  # dataset_name/gdrive.cache_dir point at the v2 set built into
+  # /Volumes/PS2000W/ds-assistant-grpo-v2 on the Mac (`grpo_train-*.jsonl` / `grpo_eval.jsonl`,
+  # same names as before, so no glob change needed here) via data_generate_v2.sh's build_v2.py:
+  #     OUT_DIR=/Volumes/PS2000W/ds-assistant-grpo-v2 FORMATS=grpo bash data_generate_v2.sh
+  # -- identity + knowledge-base pairs, plus whole end-to-end / alternative-model /
+  # metric-diagnosis code tasks (data/synthetic/code_tasks_v2.py), all as free-text
+  # {"prompt": [...], "answer": "<prose>"} pairs.
+  #
+  # *** REWARD MISMATCH, not yet fixed *** -- this is NOT math_word_problems.py's/
+  # data_science_word_problems.py's `<<a op b = c>>` + `#### <number>` / `#### overfitting` shape.
+  # None of this set's `answer` values contain a `####` marker at all, so
+  # extract_gsm8k_answer/extract_label_answer (src/tiny_lora/rewards.py) fail to parse it on every
+  # single example, and correctness_reward/diagnosis_reward return a hard 0 across the whole set
+  # regardless of reward_set below -- there is currently no reward_set that scores this data. Do
+  # not run `layer_grow grpo` against this dataset_name until a reward_set for free-text
+  # end-to-end/alt-model/diagnosis answers exists (see layer_grow/rewards.py).
+  #
+  # gdrive.mount_path assumes ds-assistant-grpo-v2.zip was uploaded to the root of "My Drive" --
+  # adjust to e.g. "some/folder/ds-assistant-grpo-v2.zip" if it landed somewhere else.
+  # gdrive.zip_file_id is kept as a fallback for a non-Colab training machine: it's the new v2
+  # zip's id (not the old pre-v2 one), but as of this writing it's still hitting the same
+  # anonymous-download throttle mount_path exists to route around -- may clear on its own
+  # (Google's own estimate is up to 24h from the first hit) or may need cookie-based auth for
+  # gdown (see tiny_lora/gdrive.py's docstring) if it doesn't.
   #
   # dataset_name must live under gdrive.cache_dir below, not the Mac's own
-  # /Volumes/PS2000W/ds-assistant-grpo -- load_raw_dataset globs dataset_name literally (see
-  # tiny_lora/data.py), it never resolves it relative to cache_dir. The Mac's own runs use
-  # reader: "local" (see data_generator_grpo.sh's own note) with that absolute path instead; this
-  # "gdrive" block is only ever read on a machine that just extracted the zip into cache_dir.
+  # /Volumes/PS2000W/ds-assistant-grpo-v2 -- load_raw_dataset globs dataset_name literally (see
+  # tiny_lora/data.py), it never resolves it relative to cache_dir; this "gdrive" block is only
+  # ever read on a machine that just extracted the zip into cache_dir.
   #
   # No eval_dataset_name here, unlike sft_layer.yaml's data: block -- tiny_lora.train_grpo has no
   # eval loop at all currently (prepare_grpo_dataset builds only a train split; run_grpo_core never
-  # passes GRPOTrainer an eval_dataset), so setting one would just be silently unused.
+  # passes GRPOTrainer an eval_dataset), so setting one would just be silently unused. The v2 set
+  # does write its own grpo_eval.jsonl into the same cache_dir, but nothing here reads it.
   reader: "gdrive"
   dataset_name: "data/synthetic/dataset/grpo_train-*.jsonl"
   max_samples: 20000
   gdrive:
-    zip_file_id: 1awUT6DVEBDGKp0oH5JbY5m23MLKMiAHH            # ds-assistant-grpo.zip, built via data_generator_grpo.sh
+    mount_path: "ds-assistant-grpo-v2.zip"                    # tried first -- Colab Drive mount, sidesteps gdown's throttling
+    zip_file_id: 1KdEk7Z8uVcKaAVZezDwDvde5wXqhmFNe             # fallback for non-Colab machines -- currently also throttled, see note above
     cache_dir: "data/synthetic/dataset"
 
 training:
