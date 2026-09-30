@@ -343,6 +343,17 @@ def growth_spec(
     }
 
 
+def _canonical_rounds(rounds: list[dict]) -> list[dict]:
+    """`rounds`, with `refine_layers` defaulted to `[]` on every entry.
+
+    A sidecar written before that field existed has no `refine_layers` key on any of its rounds
+    at all -- normalising both sides through this before comparing is what keeps
+    `check_growth_matches` from raising over that field alone, on a round that is otherwise
+    identical.
+    """
+    return [{**r, "refine_layers": r.get("refine_layers", [])} for r in rounds]
+
+
 def check_growth_matches(output_dir: Path, spec: dict) -> None:
     """Refuse to write a differently-grown run into a directory that already holds one.
 
@@ -354,14 +365,22 @@ def check_growth_matches(output_dir: Path, spec: dict) -> None:
     previous = read_growth_spec(output_dir)
     if previous is None:
         return
-    for key in ("rounds", "base_model"):
-        if previous.get(key) != spec.get(key):
-            raise ValueError(
-                f"{output_dir} holds a run with {key}={previous.get(key)!r}, but this config "
-                f"asks for {key}={spec.get(key)!r}. Checkpoints in that directory belong to the "
-                "old shape and cannot be resumed into the new one. Point training.output_dir "
-                "somewhere else, or delete the old run."
-            )
+    if previous.get("base_model") != spec.get("base_model"):
+        raise ValueError(
+            f"{output_dir} holds a run with base_model={previous.get('base_model')!r}, but this "
+            f"config asks for base_model={spec.get('base_model')!r}. Checkpoints in that "
+            "directory belong to a different base model and cannot be resumed into this one. "
+            "Point training.output_dir somewhere else, or delete the old run."
+        )
+    previous_rounds = _canonical_rounds(previous.get("rounds", []))
+    spec_rounds = _canonical_rounds(spec.get("rounds", []))
+    if previous_rounds != spec_rounds:
+        raise ValueError(
+            f"{output_dir} holds a run with rounds={previous.get('rounds')!r}, but this config "
+            f"asks for rounds={spec.get('rounds')!r}. Checkpoints in that directory belong to "
+            "the old shape and cannot be resumed into the new one. Point training.output_dir "
+            "somewhere else, or delete the old run."
+        )
 
 
 def write_sidecar(directory: Path, spec: dict) -> None:
