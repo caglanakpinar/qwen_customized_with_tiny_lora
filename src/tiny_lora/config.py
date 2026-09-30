@@ -50,10 +50,16 @@ class DataConfig:
     # applies to eval regardless of size, since scoring the full split on every eval_steps
     # (or in `tiny-lora eval`, which loads two full models) is often too slow to be worth it.
     max_eval_samples: int | None = None
-    # Google Drive file id (or full share URL) of the dataset zip. Required when reader="gdrive".
+    # Google Drive file id (or full share URL) of the dataset zip. Used when reader="gdrive" and
+    # gdrive_mount_path is unset -- gdown's anonymous public-link download, which Google throttles
+    # hard for large files regardless of actual view count; see tiny_lora.gdrive's docstring.
     gdrive_zip_file_id: str | None = None
-    # Where the zip is extracted to. Downloaded once and reused on later runs if already
-    # populated, so dataset_name/eval_dataset_name should point inside this directory.
+    # Preferred over gdrive_zip_file_id when set: the zip's path relative to "My Drive" (e.g.
+    # "ds-assistant-grpo-v2.zip"), read via an authenticated Drive mount instead of gdown's
+    # anonymous download -- Colab only (google.colab.drive). See tiny_lora.gdrive's docstring.
+    gdrive_mount_path: str | None = None
+    # Where the zip is extracted to. Fetched once and reused on later runs if already populated,
+    # so dataset_name/eval_dataset_name should point inside this directory.
     gdrive_cache_dir: str = "data/synthetic/dataset"
     # GRPO only: a system message put in front of every prompt (replacing any the dataset carries)
     # when the dataset is loaded, so the answer format the reward functions score can be spelled

@@ -26,7 +26,7 @@ from pathlib import Path
 from datasets import Dataset, concatenate_datasets, load_dataset
 
 from tiny_lora.config import DataConfig
-from tiny_lora.gdrive import download_and_extract_zip
+from tiny_lora.gdrive import download_and_extract_zip, extract_from_drive_mount
 
 LOCAL_SUFFIXES = {".json", ".jsonl"}
 
@@ -106,28 +106,39 @@ def _load_until(data_files: list[str], max_samples: int) -> Dataset:
     return loaded.select(range(max_samples))
 
 
-def ensure_gdrive_dataset(cache_dir: Path, zip_file_id: str | None) -> Path:
-    """Download and extract the dataset zip from Google Drive into `cache_dir`.
+def ensure_gdrive_dataset(
+    cache_dir: Path, zip_file_id: str | None, mount_path: str | None = None
+) -> Path:
+    """Fetch and extract the dataset zip from Google Drive into `cache_dir`.
 
-    Skipped once the cache dir is populated, so this only pays the download cost once --
-    later runs (and the eval split, loaded through the same call) read the extracted files
-    exactly like a local dataset. Returns the cache dir either way.
+    Skipped once the cache dir is populated, so this only pays the fetch cost once -- later
+    runs (and the eval split, loaded through the same call) read the extracted files exactly
+    like a local dataset. Returns the cache dir either way.
+
+    `mount_path`, if set, takes priority over `zip_file_id`: it reads the zip straight off the
+    caller's own mounted Drive (Colab only, authenticated as the file's owner) instead of
+    `gdown`'s anonymous public-link download, which Google's abuse heuristics throttle hard for
+    large files regardless of how many times the file has actually been viewed -- see
+    `tiny_lora.gdrive`'s module docstring. Falls back to `zip_file_id` when `mount_path` is unset.
 
     `data/synthetic/build.py` calls this too, so a build configured to append starts from the
     same bytes the trainer would have read. Keeping one implementation matters because the
     "already populated, leave it alone" rule is the thing both sides have to agree on: if the
-    builder re-downloaded over a dataset it was about to append to, the append would be lost.
+    builder re-fetched over a dataset it was about to append to, the append would be lost.
     """
     cache_dir = Path(cache_dir)
     if cache_dir.is_dir() and any(cache_dir.iterdir()):
         return cache_dir
 
-    if not zip_file_id:
+    if mount_path:
+        extract_from_drive_mount(cache_dir, mount_path)
+    elif zip_file_id:
+        download_and_extract_zip(cache_dir, zip_file_id, "_gdrive_dataset.zip")
+    else:
         raise ValueError(
-            "data.gdrive.zip_file_id must be set when data.reader is 'gdrive'."
+            "data.gdrive.zip_file_id or data.gdrive.mount_path must be set when "
+            "data.reader is 'gdrive'."
         )
-
-    download_and_extract_zip(cache_dir, zip_file_id, "_gdrive_dataset.zip")
     _flatten_dataset_dir(cache_dir)
     return cache_dir
 
@@ -182,7 +193,9 @@ def _ensure_gdrive_dataset(data_cfg: DataConfig) -> None:
     """`ensure_gdrive_dataset` driven by a `DataConfig`, and a no-op for any other reader."""
     if data_cfg.reader != "gdrive":
         return
-    ensure_gdrive_dataset(Path(data_cfg.gdrive_cache_dir), data_cfg.gdrive_zip_file_id)
+    ensure_gdrive_dataset(
+        Path(data_cfg.gdrive_cache_dir), data_cfg.gdrive_zip_file_id, data_cfg.gdrive_mount_path
+    )
 
 
 def load_raw_dataset(data_cfg: DataConfig, dataset_name: str | None = None) -> Dataset:

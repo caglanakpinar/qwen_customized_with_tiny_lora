@@ -1,8 +1,21 @@
-"""Shared Google Drive zip download, used by both the dataset cache and the outputs cache.
+"""Shared Google Drive zip fetch, used by both the dataset cache and the outputs cache.
 
 `tiny_lora.data.ensure_gdrive_dataset` and `tiny_lora.train_sft.resolve_resume_checkpoint` both
-reduce to "download a zip from Drive, extract it into a cache dir" -- this module is just that
-step, plus the one bit of tidy-up ("Drive wrapped everything in a folder") that both need.
+reduce to "get a zip from Drive, extract it into a cache dir" -- this module is just that step,
+plus the one bit of tidy-up ("Drive wrapped everything in a folder") that both need.
+
+Two ways to get the zip:
+
+- `download_and_extract_zip` -- `gdown`'s anonymous public-link download. Works with just a file
+  id, no Colab dependency, but Google's abuse heuristics throttle anonymous requests for large
+  ("can't scan for viruses") files hard: we hit "Too many users have viewed or downloaded this
+  file recently" on two different, freshly-shared files in a row, neither of which had actually
+  been viewed enough times to earn that -- it is a response to the request pattern (scripted,
+  cookie-less, large file), not real popularity.
+- `extract_from_drive_mount` -- mounts the caller's own Drive (Colab-only) and reads the file
+  directly, authenticated as its owner exactly like a browser download. Sidesteps the throttling
+  above entirely since Google never serves the anonymous-abuse response to an authenticated
+  request. Preferred when available; see `data.gdrive.mount_path` in a config's `data:` block.
 """
 
 from __future__ import annotations
@@ -30,6 +43,37 @@ def download_and_extract_zip(cache_dir: Path, zip_file_id: str, zip_name: str) -
     with zipfile.ZipFile(zip_path) as archive:
         archive.extractall(cache_dir)
     zip_path.unlink()
+
+
+def extract_from_drive_mount(cache_dir: Path, mount_path: str) -> None:
+    """Extract a zip straight from the caller's own mounted Google Drive into `cache_dir`.
+
+    `mount_path` is the file's path relative to "My Drive", e.g. "ds-assistant-grpo-v2.zip" for
+    a file uploaded to Drive's root, or "some/folder/ds-assistant-grpo-v2.zip" for one filed in a
+    subfolder. Mounting is idempotent -- Colab's `drive.mount` no-ops (after re-prompting auth if
+    the session lost it) when `/content/drive` is already mounted, so calling this more than once
+    in a run is harmless.
+    """
+    try:
+        from google.colab import drive
+    except ImportError as exc:
+        raise ImportError(
+            "data.gdrive.mount_path only works inside a Google Colab runtime "
+            "(needs google.colab.drive). Use data.gdrive.zip_file_id instead outside Colab."
+        ) from exc
+
+    drive.mount("/content/drive")
+    source = Path("/content/drive/MyDrive") / mount_path
+    if not source.is_file():
+        raise FileNotFoundError(
+            f"{source} not found on the mounted Drive. data.gdrive.mount_path should be the "
+            "file's path relative to 'My Drive' -- check it was uploaded there (not just "
+            "shared from someone else's Drive) and that the path/filename match exactly."
+        )
+
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(source) as archive:
+        archive.extractall(cache_dir)
 
 
 def flatten_single_wrapper_dir(cache_dir: Path) -> None:
