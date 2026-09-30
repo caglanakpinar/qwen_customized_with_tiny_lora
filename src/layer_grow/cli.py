@@ -47,8 +47,9 @@ def cli() -> None:
 @click.option(
     "--layers",
     default=None,
-    help="Position(s) for this round's new block(s) in the final stack, e.g. '25'. "
-    "Overrides layer_grow.layers.",
+    help="Position(s) this round touches, e.g. '25'. An index at/beyond the previous "
+    "checkpoint's layer count appends a new block there; an index already in that checkpoint is "
+    "refined in place instead (no new block). Overrides layer_grow.layers.",
 )
 @click.option("--model", default=None, help="Override base model name or path.")
 @click.option(
@@ -155,8 +156,9 @@ def sft_cmd(
 @click.option(
     "--layers",
     default=None,
-    help="Position(s) for this round's new block(s) in the final stack, e.g. '26'. "
-    "Overrides layer_grow.layers.",
+    help="Position(s) this round touches, e.g. '26'. An index at/beyond the previous "
+    "checkpoint's layer count appends a new block there; an index already in that checkpoint is "
+    "refined in place instead (no new block). Overrides layer_grow.layers.",
 )
 @click.option("--model", default=None, help="Override base model name or path.")
 @click.option(

@@ -7,6 +7,14 @@ round-agnostic (it mostly is: `expand_model` and `freeze_except` do not care how
 before, only which indices to touch); what is new here is a sidecar format that accumulates one
 entry per round instead of describing a single one, and freezing the *union* of every round's
 layers instead of only the newest.
+
+`layer_grow.layers` names two different things depending on the index, checked against the
+previous checkpoint's own layer count (`split_layers` does the split): a position at or beyond it
+splices in a new block there, same as always; a position already inside it -- a base layer never
+touched before, or one an earlier round grew -- is refined in place instead, unfrozen and
+fine-tuned from `previous_checkpoint`'s own weights for it, with no architecture change and no
+shape involved. A round can do both at once. This is what lets `layers: [20]` on an already-grown
+stack mean "keep fine-tuning layer 20" rather than "insert a new block ahead of it."
 """
 
 from __future__ import annotations
@@ -54,6 +62,7 @@ def _normalise_expand_sidecar(spec: dict) -> dict:
         "rounds": [
             {
                 "layers": spec["layers"],
+                "refine_layers": [],
                 "shape": spec["shape"],
                 "uniform": spec["uniform"],
                 "wrapped": spec["wrapped"],
@@ -106,6 +115,19 @@ def all_grown_layers(spec: dict) -> list[int]:
     return [index for round_spec in spec["rounds"] for index in round_spec["layers"]]
 
 
+def all_refined_layers(spec: dict) -> list[int]:
+    """Every existing layer index any round additionally unfroze for further fine-tuning in
+    place, without splicing in a new block for it. `.get(..., [])` tolerates a `layer_grow.json`
+    written before this field existed -- such a sidecar simply never refined anything."""
+    return [index for round_spec in spec["rounds"] for index in round_spec.get("refine_layers", [])]
+
+
+def trainable_layers(spec: dict) -> list[int]:
+    """Every layer index that should end up unfrozen: every block any round has ever added, plus
+    every existing layer any round has additionally chosen to refine (see `split_layers`)."""
+    return sorted(set(all_grown_layers(spec)) | set(all_refined_layers(spec)))
+
+
 # --------------------------------------------------------------------------------------
 # Rebuilding the architecture from a spec, and loading weights over it
 # --------------------------------------------------------------------------------------
@@ -114,8 +136,15 @@ def all_grown_layers(spec: dict) -> list[int]:
 def build_from_rounds(model, rounds: list[dict]):
     """Splice every round's block(s) into `model`, in order. Weights are freshly built (identity
     or random per round); the caller is expected to load the real, trained weights immediately
-    after -- same division of labour as `layer_expand.model.expand_model` itself."""
+    after -- same division of labour as `layer_expand.model.expand_model` itself.
+
+    A refine-only round (`round_spec["layers"]` empty -- see `split_layers`) adds nothing to the
+    architecture, so it is skipped here entirely; its effect is only on which layers end up
+    trainable, handled separately by `trainable_layers`/`freeze_all_growth`.
+    """
     for round_spec in rounds:
+        if not round_spec["layers"]:
+            continue
         model = expand_model(
             model, round_spec["layers"], _shape_dict(round_spec), round_spec["init"], 0.0
         )
@@ -144,14 +173,51 @@ def resolve_growth_shape(grow_cfg: LayerGrowConfig, geometry: dict, previous_sha
     return resolve_shape(grow_cfg, geometry)
 
 
+def split_layers(layers: list[int], stack_so_far: int) -> tuple[list[int], list[int]]:
+    """Split `layer_grow.layers` into new positions to splice in vs. existing layers to refine.
+
+    An index at or beyond `stack_so_far` (`previous_checkpoint`'s own layer count) names a
+    position in the *not-yet-built* stack, exactly as this field has always meant -- a new block,
+    identity-initialised and trained from scratch. An index below it already exists in
+    `previous_checkpoint` (a base layer that has never been touched, or one an earlier round
+    grew): rather than inserting a second block ahead of it and shifting the whole stack down,
+    that layer is refined in place instead -- unfrozen and fine-tuned starting from the weights
+    `previous_checkpoint` already loaded for it, with no architecture change and no shape
+    involved at all.
+    """
+    unique = sorted(set(layers))
+    if len(unique) != len(layers):
+        raise ValueError(
+            f"layer_grow.layers has repeated indices: {layers}. Each position needs its own "
+            "entry."
+        )
+    negative = [i for i in unique if i < 0]
+    if negative:
+        raise ValueError(f"layer_grow.layers contains negative indices: {negative}.")
+    new_layers = [i for i in unique if i >= stack_so_far]
+    refine_layers = [i for i in unique if i < stack_so_far]
+    return new_layers, refine_layers
+
+
+def _last_block_shape(rounds: list[dict]) -> dict:
+    """The shape of the most recent round that actually spliced in a block, skipping any
+    refine-only round in between. There is always at least one such round: the first round
+    (`layer_expand`, or an earlier `layer_grow` round) never starts empty."""
+    for round_spec in reversed(rounds):
+        if round_spec["layers"]:
+            return _shape_dict(round_spec)
+    raise ValueError("No round in this growth spec has ever added a block to inherit a shape from.")
+
+
 def freeze_all_growth(model, spec: dict) -> tuple[int, int]:
-    """Freeze the base layers only; every block any round has ever added stays trainable.
+    """Freeze the base layers only; every block any round has ever added, and every existing
+    layer any round has chosen to refine, stays trainable.
 
     This is the one behavioural difference from `layer_expand.freeze_except`, which freezes
     everything but the block(s) *this* run adds. Reuses that same function underneath -- it just
     freezes-then-unfreezes a wider set of indices.
     """
-    return freeze_except(model, all_grown_layers(spec))
+    return freeze_except(model, trainable_layers(spec))
 
 
 # --------------------------------------------------------------------------------------
@@ -247,18 +313,27 @@ def growth_spec(
     model_cfg: ModelConfig,
     previous_spec: dict,
     new_layers: list[int],
+    refine_layers: list[int],
     shape: dict,
     init: str,
 ) -> dict:
-    """The full, accumulated sidecar this run writes: every earlier round plus this one."""
+    """The full, accumulated sidecar this run writes: every earlier round plus this one.
+
+    `shape` is always a real shape dict, even when `new_layers` is empty (a refine-only round) --
+    it is then just the shape `_last_block_shape` inherited, carried along so a consumer of this
+    sidecar (push_to_hub.py's cards/tables, in particular) never has to special-case a round that
+    spliced in no block. `block_parameters` is 0 in that case, which is what actually reports
+    "this round added nothing new."
+    """
     new_round = {
         "layers": new_layers,
+        "refine_layers": refine_layers,
         "shape": {k: v for k, v in shape.items() if k not in ("uniform", "wrapped")},
         "uniform": shape["uniform"],
         "wrapped": shape["wrapped"],
         "init": init,
-        "block_parameters": block_parameter_count(shape),
-        "source": "layer_grow",
+        "block_parameters": block_parameter_count(shape) if new_layers else 0,
+        "source": "layer_grow" if new_layers else "layer_grow_refine",
     }
     return {
         "base_model": previous_spec["base_model"],
@@ -314,11 +389,18 @@ def stamp_config(directory: Path, wrapped: bool) -> None:
 
 def describe_growth(spec: dict) -> str:
     rounds = spec["rounds"]
-    pieces = [
-        f"round {i + 1}: layer(s) {r['layers']} ({r['shape']['hidden_size']}d/"
-        f"{r['shape']['intermediate_size']}, {r['block_parameters']:,} params, {r['source']})"
-        for i, r in enumerate(rounds)
-    ]
+    pieces = []
+    for i, r in enumerate(rounds):
+        if r["layers"]:
+            piece = (
+                f"round {i + 1}: layer(s) {r['layers']} ({r['shape']['hidden_size']}d/"
+                f"{r['shape']['intermediate_size']}, {r['block_parameters']:,} params, {r['source']})"
+            )
+            if r.get("refine_layers"):
+                piece += f", also refined existing layer(s) {r['refine_layers']}"
+        else:
+            piece = f"round {i + 1}: refined existing layer(s) {r.get('refine_layers', [])} ({r['source']})"
+        pieces.append(piece)
     return "; ".join(pieces)
 
 
@@ -328,19 +410,24 @@ def describe_growth(spec: dict) -> str:
 
 
 def load_layer_grow_model(model_cfg: ModelConfig, grow_cfg: LayerGrowConfig, output_dir: Path):
-    """Build the grown model with every added block -- old and new -- trainable.
+    """Build the grown model with every added block -- old and new -- trainable, plus any
+    existing layer this round names for refinement.
 
     Returns `(model, init_checkpoint)`, matching `layer_expand.model.load_layer_expand_model`'s
-    contract: `init_checkpoint` is where *this round's* weights were loaded from, or None when a
-    fresh block was built for it, and the caller needs it for the same resume-vs-fresh-block
-    decision layer_expand makes.
+    contract: `init_checkpoint` is where *this round's* weights were loaded from, or None when
+    nothing was, and the caller needs it for the same resume-vs-fresh-block decision layer_expand
+    makes.
 
     The order:
       1. resolve `previous_checkpoint` and load it -- this is the whole earlier stack, frozen or
          not, exactly as that run left it,
-      2. splice in one more block, identity-initialised,
-      3. load this round's own previous weights over the top if there is one,
-      4. freeze the base only; every block from every round stays trainable.
+      2. split `grow_cfg.layers` into new positions to splice a block into vs. existing layers
+         (a base layer, or an earlier round's own block) to refine in place -- see
+         `split_layers`,
+      3. splice in this round's new block, identity-initialised, if `layers` named one,
+      4. load this round's own previous weights over the top if there is one,
+      5. freeze the base only; every block from every round, plus every refined existing layer,
+         stays trainable.
     """
     if not grow_cfg.previous_checkpoint:
         raise ValueError(
@@ -358,12 +445,25 @@ def load_layer_grow_model(model_cfg: ModelConfig, grow_cfg: LayerGrowConfig, out
 
     geometry = base_model_geometry(model_cfg)
     stack_so_far = previous_spec["base_num_hidden_layers"] + len(all_grown_layers(previous_spec))
-    new_layers = validate_layers(grow_cfg.layers or [stack_so_far], stack_so_far)
+    new_layers, refine_layers = split_layers(grow_cfg.layers or [stack_so_far], stack_so_far)
+    if new_layers:
+        new_layers = validate_layers(new_layers, stack_so_far)
 
-    previous_shape = _shape_dict(previous_spec["rounds"][-1])
-    shape = resolve_growth_shape(grow_cfg, geometry, previous_shape)
+    previous_shape = _last_block_shape(previous_spec["rounds"])
+    if not new_layers:
+        shape_fields = ("hidden_size", "intermediate_size", "num_attention_heads", "num_key_value_heads")
+        if any(getattr(grow_cfg, field) is not None for field in shape_fields):
+            print(
+                "layer_grow: hidden_size/intermediate_size/num_attention_heads/"
+                "num_key_value_heads are ignored this round -- every index in layer_grow.layers "
+                f"({grow_cfg.layers}) already exists in {previous_checkpoint}, so this round "
+                f"only refines existing layer(s) {refine_layers} and splices in no new block."
+            )
+        shape = previous_shape
+    else:
+        shape = resolve_growth_shape(grow_cfg, geometry, previous_shape)
 
-    spec = growth_spec(model_cfg, previous_spec, new_layers, shape, grow_cfg.init)
+    spec = growth_spec(model_cfg, previous_spec, new_layers, refine_layers, shape, grow_cfg.init)
     check_growth_matches(output_dir, spec)
 
     init_checkpoint = None
@@ -395,17 +495,25 @@ def load_layer_grow_model(model_cfg: ModelConfig, grow_cfg: LayerGrowConfig, out
     model = build_from_rounds(base_model, previous_spec["rounds"])
     load_expanded_weights(model, previous_checkpoint, all_grown_layers(previous_spec))
 
-    model = expand_model(model, new_layers, shape, grow_cfg.init, grow_cfg.init_std)
+    if new_layers:
+        model = expand_model(model, new_layers, shape, grow_cfg.init, grow_cfg.init_std)
     if init_checkpoint is not None:
-        load_expanded_weights(model, init_checkpoint, new_layers)
+        load_expanded_weights(model, init_checkpoint, new_layers or refine_layers)
 
     trainable, total = freeze_all_growth(model, spec)
     write_sidecar(output_dir, spec)
 
-    print(f"This round adds layer(s) {new_layers} ({shape['hidden_size']}d/{shape['intermediate_size']}).")
+    if new_layers:
+        print(f"This round adds layer(s) {new_layers} ({shape['hidden_size']}d/{shape['intermediate_size']}).")
+    if refine_layers:
+        print(
+            f"This round also fine-tunes existing layer(s) {refine_layers} in place, continuing "
+            f"from their weights in {previous_checkpoint} -- no architecture change."
+        )
     print(
         f"Trainable {trainable:,} / {total:,} params ({100 * trainable / total:.2f}%) -- "
-        f"every block from every round ({all_grown_layers(spec)}), base frozen."
+        f"every block from every round ({all_grown_layers(spec)}) plus every refined layer "
+        f"({all_refined_layers(spec)}), base frozen."
     )
     return model, init_checkpoint
 

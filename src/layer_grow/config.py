@@ -22,8 +22,21 @@ class LayerGrowConfig:
     # layer_expand.base_adapters uses for adapter directories.
     previous_checkpoint: str = ""
 
-    # Position(s) the new block(s) take in the *final* stack, 0-based. If the previous checkpoint
-    # is a 25-layer model (base 24 + one grown block), `layers: [25]` appends one more.
+    # Position(s) this round touches, 0-based. Each index is read against the previous
+    # checkpoint's own layer count (its base layers plus every block any earlier round grew):
+    #   - at or beyond that count -- a position in the *not-yet-built* stack, so a new block is
+    #     spliced in there, identity-initialised and trained from scratch. If the previous
+    #     checkpoint is a 25-layer model (base 24 + one grown block), `layers: [25]` appends one
+    #     more, same as always.
+    #   - below that count -- an index that already exists in the previous checkpoint, either a
+    #     base layer never touched before or one an earlier round grew. No new block is built for
+    #     it; instead that existing layer is unfrozen and fine-tuned in place, continuing from
+    #     the weights `previous_checkpoint` already has for it. `hidden_size`/`intermediate_size`/
+    #     `num_attention_heads`/`num_key_value_heads` below are irrelevant to it and are ignored
+    #     (with a printed note) if this round names only existing layers.
+    # A single `layers:` list can mix both kinds, e.g. `[20, 27]` on a 27-layer previous
+    # checkpoint both refines existing layer 20 and appends new layer 27. See
+    # `layer_grow.model.split_layers` for the exact rule.
     layers: list[int] | None = None
 
     # Shape of the new block. None on all four inherits the *previous round's own* shape -- the
