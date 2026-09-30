@@ -58,9 +58,14 @@ layer_grow:
     zip_file_id: 15NYnthiKYeyjehpHlHYmT6IvvwtQaxtU
     cache_dir: "outputs/sft-layer-grow/checkpoint-1500"
 
-  # Position(s) this round's new block(s) take in the *final* stack, 0-based. checkpoint-1500 is
-  # already 26 layers (0-23 base, 24 and 25 grown), so [26] appends one more, giving 27.
-  layers: [26]
+  # Position(s) this round touches, 0-based, checked against checkpoint-1500's own layer count
+  # (28: 0-23 base, 24 and 25 grown -- see the header comment for why not "27"). An index at or
+  # beyond that count appends a new block there, as [28] does here. An index below it (e.g. [20],
+  # a base layer, or [24], an already-grown one) names an *existing* layer instead: no new block
+  # is spliced in, that layer is just unfrozen and fine-tuned further from checkpoint-1500's own
+  # weights for it -- both kinds can appear in the same list. See layer_grow/model.py's
+  # split_layers for the exact rule.
+  layers: [28]
 
   # Shape of this round's new block: the same as layer 25's, spelled out rather than left null.
   # Null on all four would inherit exactly this from checkpoint-1500's newest round (see
