@@ -103,7 +103,7 @@ data:
   max_samples: 50000            # cap on training rows read from the glob
   max_eval_samples: 500         # eval runs every eval_steps and scores this whole split each time
   gdrive:
-    zip_file_id: 1S68pV_1mDVjVNVNpFfhBEvX7S2ecmJsI
+    zip_file_id: 15pQ1viBLNzA_6dhGMZCs_LTmusT6BLoD
     cache_dir: "data/synthetic/dataset"
 
 training:
@@ -111,7 +111,7 @@ training:
   # with two rounds) and checkpoint-1500 itself. Pointing this round there would fail
   # check_growth_matches (three rounds vs two), and even past that the Trainer would resume from
   # round 2's newest checkpoint-N as if it were this run's own.
-  output_dir: "outputs/sft-layer-grow-26"
+  output_dir: "outputs/sft-layer-grow"
   # No training.gdrive block here (yet): this output_dir starts empty -- there is no zipped
   # checkpoint-N for *this* run to fall back to on a fresh machine until one has actually been
   # trained and uploaded. Add one here once you have a run worth resuming from elsewhere.
