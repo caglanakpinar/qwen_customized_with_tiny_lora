@@ -2,17 +2,26 @@
 # fine-tune it *together with* the block(s) already there -- unlike layer_expand, which freezes
 # everything except the block it just added, this keeps the whole trainable tail open.
 #
-# This is round 3. Starting point is outputs/sft-layer-grow/checkpoint-1500: round 2's run of this
-# config, a 26-layer model -- base 24 (0-23), layer 24 (1536d, from configs/sft_layer_expand.yaml
-# via outputs/sft-layer-expand-wide/checkpoint-16000) and layer 25 (3072d, grown and fine-tuned in
-# round 2). Its layer_grow.json must record exactly those two rounds, [24] (layer_expand) then
-# [25] (layer_grow), same as outputs/sft-layer-grow/layer_grow.json. Not checkpoint-3750 from that
-# same run directory: that one picked up a third, accidental [25] round (see configs/
-# grpo_layer.yaml's header), which would put this round's block at the wrong index.
+# Starting point is outputs/sft-layer-grow/checkpoint-1500: originally round 2's run of this
+# config, meant to be a clean 26-layer model -- base 24 (0-23), layer 24 (1536d, from configs/
+# sft_layer_expand.yaml via outputs/sft-layer-expand-wide/checkpoint-16000) and layer 25 (3072d,
+# grown and fine-tuned in round 2), its layer_grow.json recording exactly those two rounds, [24]
+# (layer_expand) then [25] (layer_grow).
 #
-# This round appends layer 26 at layer 25's shape (3072d/16640 MLP/48 heads). Layers 24, 25 and
-# 26 all stay trainable; only the original base (0-23, already carrying the merged TinyLoRA +
-# layer_lora weights) stays frozen.
+# As actually run, though, checkpoint-1500 picked up the same accidental-extra-round bug already
+# documented for checkpoint-3750 in this same run directory (see configs/grpo_layer.yaml's
+# header): its own layer_grow.json records [24] then [25] two or three times over, each an insert
+# at position 25 rather than a continuation of the same block, one round per (re-)run of this
+# config against it before the layers: field below distinguished "new position" from "existing
+# layer to refine" (see layer_grow/model.py's split_layers). By the time this config targets it,
+# checkpoint-1500 is therefore 28 layers, not 26 -- confirm against checkpoint-1500's own
+# layer_grow.json before trusting this further; if it turns out to hold a different round count,
+# `layers:` below needs to change to match (base_num_hidden_layers + len(all_grown_layers(spec))
+# from layer_grow/model.py is the number to append at).
+#
+# This round appends layer 28 at layer 25's shape (3072d/16640 MLP/48 heads). Every grown layer
+# (24, 25, 28, and whichever duplicate rounds landed in between) stays trainable; only the
+# original base (0-23, already carrying the merged TinyLoRA + layer_lora weights) stays frozen.
 #
 # There is no base_adapters here, unlike layer_expand: whatever adapters the first round merged
 # are already baked into checkpoint-1500's weights (its full state dict is loaded, base layers
@@ -112,11 +121,16 @@ data:
     cache_dir: "data/synthetic/dataset"
 
 training:
-  # A fresh directory, not outputs/sft-layer-grow: that one holds round 2's run (a layer_grow.json
-  # with two rounds) and checkpoint-1500 itself. Pointing this round there would fail
-  # check_growth_matches (three rounds vs two), and even past that the Trainer would resume from
-  # round 2's newest checkpoint-N as if it were this run's own.
-  output_dir: "outputs/sft-layer-grow"
+  # A fresh directory, not outputs/sft-layer-grow: that one holds round 2's run's own finished
+  # layer_grow.json (written directly at outputs/sft-layer-grow/layer_grow.json when that run's
+  # output_dir was itself outputs/sft-layer-grow) plus checkpoint-1500 nested inside it. Pointing
+  # this round's output_dir there makes check_growth_matches read that already-finished sidecar
+  # as "previous" and compare it against this round's own, one-round-longer spec -- a guaranteed
+  # mismatch every time, not a sign of anything wrong with previous_checkpoint itself -- and even
+  # past that the Trainer would resume from round 2's newest checkpoint-N as if it were this
+  # run's own. "outputs/sft-layer-grow-28" mirrors the naming the header's own round-4 example
+  # uses (outputs/sft-layer-grow-27), keyed to the layer this round appends.
+  output_dir: "outputs/sft-layer-grow-28"
   # No training.gdrive block here (yet): this output_dir starts empty -- there is no zipped
   # checkpoint-N for *this* run to fall back to on a fresh machine until one has actually been
   # trained and uploaded. Add one here once you have a run worth resuming from elsewhere.
