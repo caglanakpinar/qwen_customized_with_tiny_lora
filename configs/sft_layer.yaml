@@ -2,24 +2,21 @@
 # fine-tune it *together with* the block(s) already there -- unlike layer_expand, which freezes
 # everything except the block it just added, this keeps the whole trainable tail open.
 #
-# Starting point is outputs/sft-layer-expand-wide/checkpoint-16000: a 25-layer model (base 24 +
-# one wide block at layer 24, from configs/sft_layer_expand.yaml). It is the newest -- and, as of
-# this writing, the ONLY -- checkpoint left under that run's output_dir; earlier checkpoints
-# (including checkpoint-11200, benchmarked in README.md's run 7) were rotated out by
-# training.save_total_limit. Note the caveat that comes with it: README.md's "Benchmark Results"
-# section reads checkpoint-16000 as showing overfitting relative to checkpoint-11200 (flat
-# eval_loss/perplexity despite 4800 more steps, and falling rouge_l_f1/token_f1) -- growing a much
-# larger block on top of it (see the width note below) compounds whatever that run already
-# overfit, rather than starting from a clean base. Worth a fresh, non-rotated checkpoint-11200-like
-# save next time before growing again, if this run is repeated.
+# This is round 3. Starting point is outputs/sft-layer-grow/checkpoint-1500: round 2's run of this
+# config, a 26-layer model -- base 24 (0-23), layer 24 (1536d, from configs/sft_layer_expand.yaml
+# via outputs/sft-layer-expand-wide/checkpoint-16000) and layer 25 (3072d, grown and fine-tuned in
+# round 2). Its layer_grow.json must record exactly those two rounds, [24] (layer_expand) then
+# [25] (layer_grow), same as outputs/sft-layer-grow/layer_grow.json. Not checkpoint-3750 from that
+# same run directory: that one picked up a third, accidental [25] round (see configs/
+# grpo_layer.yaml's header), which would put this round's block at the wrong index.
 #
-# This round appends layer 25 at 2x layer 24's width (3072 vs 1536), NOT the same width -- see the
-# shape block below for why that is not simply "2x the parameters." Both 24 and 25 stay trainable;
-# only the original base (0-23, already carrying the merged TinyLoRA + layer_lora weights) stays
-# frozen.
+# This round appends layer 26 at layer 25's shape (3072d/16640 MLP/48 heads). Layers 24, 25 and
+# 26 all stay trainable; only the original base (0-23, already carrying the merged TinyLoRA +
+# layer_lora weights) stays frozen.
 #
 # There is no base_adapters here, unlike layer_expand: whatever adapters the first round merged
-# are already baked into checkpoint-16000's weights, so there is nothing left to merge again.
+# are already baked into checkpoint-1500's weights (its full state dict is loaded, base layers
+# included), and its sidecar carries the base_adapters list forward as a record only.
 #
 # Loading this checkpoint later needs the layer_grow package, the same way a layer_expand
 # checkpoint needs layer_expand: `tiny-lora chat|serve|chat-api|eval --adapter <dir>` detect the
@@ -34,9 +31,10 @@
 # or, since this is the default config, just:
 #     poetry run layer_grow sft --no-quant
 #
-# Grow further shapes/positions per-run without editing this file:
-#     poetry run layer_grow sft --layers 25 --hidden-size 3072 --num-attention-heads 48 \
-#         --intermediate-size 16640 --no-quant
+# Grow further shapes/positions per-run without editing this file -- e.g. round 4, on top of this
+# round's finished model:
+#     poetry run layer_grow sft --previous-checkpoint outputs/sft-layer-grow-26 --layers 27 \
+#         --output-dir outputs/sft-layer-grow-27 --no-quant
 
 model:
   model_name_or_path: "Qwen/Qwen2.5-0.5B-Instruct"  # base model pulled from the Hugging Face Hub
@@ -46,56 +44,51 @@ model:
   attn_implementation: null    # let transformers pick (e.g. sdpa); set "flash_attention_2" where supported
 
 layer_grow:
-  # sft_layer.yaml's own run, pinned to a specific checkpoint -- see the header comment above for
-  # why this isn't left pointed at the bare run directory.
-  previous_checkpoint: "outputs/sft-layer-grow/checkpoint-3750"
+  # Round 2's run, pinned to the checkpoint fine-tuned for layer 25 -- see the header comment
+  # above for why this one and not that run's newest.
+  previous_checkpoint: "outputs/sft-layer-grow/checkpoint-1500"
 
-  # Google Drive fallback for previous_checkpoint, same reasoning as sft_layer.yaml's. Nothing
-  # uploaded yet as of this writing -- outputs/sft-layer-grow is still mid-run locally -- so this
-  # is a placeholder to fill in once checkpoint-3750 (or whichever checkpoint previous_checkpoint
-  # is bumped to) is worth sharing across machines. cache_dir matches previous_checkpoint exactly,
-  # same reasoning as sft_layer.yaml's own cache_dir note, so a zip of just that checkpoint's
-  # contents lands directly where a local run would have written it.
+  # Google Drive fallback for previous_checkpoint, used only when nothing usable is found at that
+  # path locally. zip_file_id is null because the previous id (18edzBlAqXcHoTA5XRjBCNtVD8ViwngWf,
+  # a zip of checkpoint-3750) returns 404 on Drive as of 2026-09-30, and was the wrong checkpoint
+  # for this round anyway. Set it to a zip of checkpoint-1500 -- the whole directory as the Trainer
+  # wrote it, layer_grow.json included -- to train on a machine that doesn't have it locally.
+  # cache_dir matches previous_checkpoint exactly, so the zip lands where that path expects it.
   gdrive:
-    zip_file_id: 18edzBlAqXcHoTA5XRjBCNtVD8ViwngWf
-    cache_dir: "outputs/sft-layer-grow/checkpoint-3750"
+    zip_file_id: 1J-U3-JxOeEOqfIBlLbFdvBrYJ8rlnskT
+    cache_dir: "outputs/sft-layer-grow/checkpoint-1500"
 
-  # Position(s) this round's new block(s) take in the *final* stack, 0-based. checkpoint-16000 is
-  # already 25 layers (0-23 base, 24 the first grown block), so [25] appends one more, giving 26.
-  layers: [25]
+  # Position(s) this round's new block(s) take in the *final* stack, 0-based. checkpoint-1500 is
+  # already 26 layers (0-23 base, 24 and 25 grown), so [26] appends one more, giving 27.
+  layers: [26]
 
-  # Shape of this round's new block: 2x layer 24's width (1536 -> 3072), NOT null-inherit-previous
-  # (see layer_grow.model.resolve_growth_shape -- leaving all four null here would have kept layer
-  # 25 at layer 24's own 1536d/8320-MLP/24-head shape instead of widening it).
+  # Shape of this round's new block: the same as layer 25's, spelled out rather than left null.
+  # Null on all four would inherit exactly this from checkpoint-1500's newest round (see
+  # layer_grow.model.resolve_growth_shape); explicit keeps it fixed if previous_checkpoint is ever
+  # bumped to a checkpoint whose newest block has a different shape.
   #
-  # 3072 = 48 heads x head_dim 64, same constraint layer_expand's own shape carries: hidden_size
-  # must equal num_attention_heads * 64, and head_dim itself cannot change (shared rotary tables
-  # and KV cache across the stack) -- so widen via num_attention_heads only.
+  # 3072 = 48 heads x head_dim 64: hidden_size must equal num_attention_heads * 64, and head_dim
+  # itself cannot change (shared rotary tables and KV cache across the stack) -- so widen via
+  # num_attention_heads only. 16640 keeps layer 24's intermediate/hidden ratio (8320/1536 = 5.42,
+  # matching Qwen2.5-0.5B's own 4864/896).
   #
-  # 16640 = 8320 * 2, keeping the same intermediate/hidden ratio (5.42, matching Qwen2.5-0.5B's
-  # own 4864/896 MLP ratio) that sft_layer_expand.yaml used for layer 24, rather than letting the
-  # ratio drift.
-  #
-  # IMPORTANT: doubling hidden_size does not double this block's parameter count -- the MLP term
-  # (3 * hidden_size * intermediate_size) scales with BOTH dimensions doubling, so it scales ~4x.
-  # This block: 178.5M params (vs layer 24's 46.2M, a 3.86x jump), and because layer_grow keeps
-  # every earlier block trainable too (see freeze_all_growth below), this run trains layer 24 AND
-  # 25 together: ~224.7M trainable params, ~45% of the ~494M-parameter model, against the same
-  # ~50k-row dataset that already showed overfitting signs on a 46.2M-param block alone (see
-  # README.md's checkpoint-16000 interpretation). Worth watching eval_loss closely from step 1.
+  # Trainable this round: layer 24's 46.2M + layer 25's 178.5M + layer 26's 178.5M = 403.3M
+  # params, ~45% of the ~897M-parameter 27-layer model (up from 224.7M/31% in round 2), against
+  # the same ~50k-row dataset that already showed overfitting signs on layer 24's 46.2M alone
+  # (see README.md's checkpoint-16000 interpretation). Worth watching eval_loss closely from step 1.
   hidden_size: 3072
   intermediate_size: 16640
   num_attention_heads: 48
-  num_key_value_heads: null
+  num_key_value_heads: null    # null -> the base model's 2, same as layer 25
 
   # "identity" zeroes this round's block's output projections, so it starts as a residual
-  # passthrough and training moves away from exactly what checkpoint-16000 already was, rather
+  # passthrough and training moves away from exactly what checkpoint-1500 already was, rather
   # than injecting noise into a working stack from step one. Same reasoning as layer_expand.init.
   init: "identity"
   init_std: 0.02               # std of the normal init applied before the output zeroing
 
   # "auto" continues *this round* from <training.output_dir>/model if a previous attempt at it
-  # already finished, otherwise builds a fresh block for layer 25. A run interrupted partway is
+  # already finished, otherwise builds a fresh block for layer 26. A run interrupted partway is
   # restored by the Trainer itself (optimizer state, LR schedule, step count included), which is
   # why this deliberately ignores checkpoint-N in output_dir -- see layer_grow.model's docstring.
   init_from_checkpoint: "auto"
@@ -114,37 +107,35 @@ data:
     cache_dir: "data/synthetic/dataset"
 
 training:
-  # A fresh directory, not outputs/sft-layer-expand-wide: this run's checkpoints are a different
-  # architecture (26 layers, two trainable blocks) from that run's (25 layers, one). Writing into
-  # the same dir would collide with check_growth_matches/check_sidecar_matches on the first save.
-  output_dir: "outputs/sft-layer-grow"
-  # No training.gdrive block here (yet): unlike layer_expand.base_adapters, which points at
-  # finished runs that already exist somewhere, this output_dir starts empty -- there is no
-  # zipped checkpoint-N for *this* run to fall back to on a fresh machine until one has actually
-  # been trained and uploaded. Add one here once you have a run worth resuming from elsewhere.
+  # A fresh directory, not outputs/sft-layer-grow: that one holds round 2's run (a layer_grow.json
+  # with two rounds) and checkpoint-1500 itself. Pointing this round there would fail
+  # check_growth_matches (three rounds vs two), and even past that the Trainer would resume from
+  # round 2's newest checkpoint-N as if it were this run's own.
+  output_dir: "outputs/sft-layer-grow-26"
+  # No training.gdrive block here (yet): this output_dir starts empty -- there is no zipped
+  # checkpoint-N for *this* run to fall back to on a fresh machine until one has actually been
+  # trained and uploaded. Add one here once you have a run worth resuming from elsewhere.
   num_train_epochs: 1          # max_steps overrides this
   max_steps: 20000
-  # UNMEASURED, and the old estimate below no longer applies now that layer 25 is 3072-wide, not
-  # 1536: its own activations roughly double again (intermediate_size 16640 vs layer 24's 8320),
-  # and its optimizer state (AdamW moments over 178.5M params, ~3.86x layer 24's 46.2M) adds
-  # meaningfully more static memory than the old two-equal-blocks estimate assumed. The vocab
-  # projection (151,936 x ~10 bytes/token) still dominates per-token activation memory, so this
-  # is not a clean 2x/4x either -- measure before committing to a batch size; drop
+  # UNMEASURED for this round. Round 2 trained 224.7M params at this batch size; this round trains
+  # 403.3M (1.8x), adding a second 3072d/16640 block's activations and AdamW moments on top. The
+  # vocab projection (151,936 x ~10 bytes/token) still dominates per-token activation memory, so
+  # this is not a clean 1.8x either -- measure before committing to a batch size; drop
   # per_device_train_batch_size and raise gradient_accumulation_steps to match if it OOMs.
   per_device_train_batch_size: 8
   per_device_eval_batch_size: 8
   gradient_accumulation_steps: 4   # effective batch size = train_batch_size * this
-  # Two trainable blocks, one of them (layer 24) already past its own identity-init phase, so a
-  # slightly lower LR than layer_expand's first round -- layer 24 is now a working part of the
-  # model, not a passthrough being nudged off zero, and a peak LR sized for that first move would
-  # overshoot on a block that already has real weights to disturb only carefully.
+  # Three trainable blocks, two of them (layers 24 and 25) already past their own identity-init
+  # phase, so the same lower-than-layer_expand LR as round 2 -- those blocks are working parts of
+  # the model, not passthroughs being nudged off zero, and a peak LR sized for that first move
+  # would overshoot on blocks that already have real weights to disturb only carefully.
   learning_rate: 5.0e-5
   lr_scheduler_type: "cosine"
-  warmup_steps: 200            # shorter than layer_expand's: only layer 25 starts at identity now
+  warmup_steps: 200            # shorter than layer_expand's: only layer 26 starts at identity now
   max_grad_norm: 1.0
-  # Both trainable blocks have real, non-zero weights by the time this round starts (layer 24
-  # from its own training, layer 25 from N(0, init_std) like layer_expand's blocks always do) --
-  # same reasoning as sft_layer_expand.yaml's weight_decay, carried forward.
+  # Every trainable block has real, non-zero weights by the time this round starts (layers 24 and
+  # 25 from their own training, layer 26 from N(0, init_std) like layer_expand's blocks always
+  # do) -- same reasoning as sft_layer_expand.yaml's weight_decay, carried forward.
   weight_decay: 0.02
   adam_beta2: 0.999
   neftune_noise_alpha: 5
@@ -159,11 +150,10 @@ training:
   # frozen and stores no activations to recompute. Lower per_device_train_batch_size instead.
   gradient_checkpointing: false
   report_to: "none"
-  # Two trainable blocks (~224.7M params combined: layer 24's 46.2M + layer 25's 178.5M at 3072d)
-  # against the same ~50k-sample dataset makes the overfitting risk layer_expand already flagged
-  # far more binding, not less -- ~45% of the model is now trainable, up from 9.4% for layer 24
-  # alone, and checkpoint-16000 (this run's own starting point) already showed overfitting
-  # signs at 46.2M trainable params (see README.md). Watch eval_loss from the first eval_steps.
+  # Three trainable blocks (403.3M params) against the same ~50k-sample dataset make the
+  # overfitting risk layer_expand already flagged more binding again -- ~45% of the model is now
+  # trainable, up from 31% in round 2 and 8.6% for layer 24 alone, which already showed
+  # overfitting signs at 46.2M params (see README.md). Watch eval_loss from the first eval_steps.
   early_stopping: true
   early_stopping_patience: 5
   # See sft_layer_expand.yaml's note: 0.0 counts any decrease, however small, as improvement and
