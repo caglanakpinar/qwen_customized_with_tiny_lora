@@ -205,7 +205,9 @@ if data_cfg.reader != 'gdrive':
     print(f'    reader is {data_cfg.reader!r}; nothing to fetch')
     sys.exit(0)
 
-cache_dir = ensure_gdrive_dataset(data_cfg.gdrive_cache_dir, data_cfg.gdrive_zip_file_id)
+cache_dir = ensure_gdrive_dataset(
+    data_cfg.gdrive_cache_dir, data_cfg.gdrive_zip_file_id, data_cfg.gdrive_mount_path
+)
 # The pattern's own basename, not a hardcoded 'sft_train-*.jsonl' -- MODE=grpo's dataset_name is
 # 'grpo_math_train-*.jsonl', 'grpo_diagnosis_train-*.jsonl', or a literal filename, none of which
 # that SFT-specific glob would ever match.
@@ -214,7 +216,7 @@ shards = sorted(cache_dir.glob(pattern))
 if not shards:
     sys.exit(
         f'no files matching {pattern!r} in {cache_dir} after extraction -- check '
-        f'data.gdrive.zip_file_id in $CONFIG points at a dataset zip, not something else'
+        f'data.gdrive.zip_file_id/mount_path in $CONFIG points at a dataset zip, not something else'
     )
 print(f'    {len(shards)} shard(s) ready in {cache_dir}')
 "
