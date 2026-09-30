@@ -183,12 +183,12 @@ data:
   # eval loop at all currently (prepare_grpo_dataset builds only a train split; run_grpo_core never
   # passes GRPOTrainer an eval_dataset), so setting one would just be silently unused. The v2 set
   # does write its own grpo_eval.jsonl into the same cache_dir, but nothing here reads it.
-  reader: "gdrive"
+  reader: "local"
   dataset_name: "data/synthetic/dataset/grpo_train-*.jsonl"
   max_samples: 20000
   gdrive:
     mount_path: "ds-assistant-grpo-v2.zip"                    # tried first -- Colab Drive mount, sidesteps gdown's throttling
-    zip_file_id: 1KdEk7Z8uVcKaAVZezDwDvde5wXqhmFNe             # fallback for non-Colab machines -- currently also throttled, see note above
+    zip_file_id: null            # fallback for non-Colab machines -- currently also throttled, see note above
     cache_dir: "data/synthetic/dataset"
 
 training:
