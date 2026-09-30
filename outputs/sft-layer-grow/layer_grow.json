@@ -1,0 +1,82 @@
+{
+  "base_model": "Qwen/Qwen2.5-0.5B-Instruct",
+  "base_num_hidden_layers": 24,
+  "rounds": [
+    {
+      "layers": [
+        24
+      ],
+      "shape": {
+        "hidden_size": 1536,
+        "intermediate_size": 8320,
+        "num_attention_heads": 24,
+        "num_key_value_heads": 2,
+        "head_dim": 64,
+        "base_hidden_size": 896
+      },
+      "uniform": false,
+      "wrapped": true,
+      "init": "identity",
+      "block_parameters": 46207744,
+      "source": "layer_expand"
+    },
+    {
+      "layers": [
+        25
+      ],
+      "shape": {
+        "hidden_size": 3072,
+        "intermediate_size": 16640,
+        "num_attention_heads": 48,
+        "num_key_value_heads": 2,
+        "head_dim": 64,
+        "base_hidden_size": 896
+      },
+      "uniform": false,
+      "wrapped": true,
+      "init": "identity",
+      "block_parameters": 178529536,
+      "source": "layer_grow"
+    },
+    {
+      "layers": [
+        25
+      ],
+      "shape": {
+        "hidden_size": 3072,
+        "intermediate_size": 16640,
+        "num_attention_heads": 48,
+        "num_key_value_heads": 2,
+        "head_dim": 64,
+        "base_hidden_size": 896
+      },
+      "uniform": false,
+      "wrapped": true,
+      "init": "identity",
+      "block_parameters": 178529536,
+      "source": "layer_grow"
+    },
+    {
+      "layers": [
+        25
+      ],
+      "shape": {
+        "hidden_size": 3072,
+        "intermediate_size": 16640,
+        "num_attention_heads": 48,
+        "num_key_value_heads": 2,
+        "head_dim": 64,
+        "base_hidden_size": 896
+      },
+      "uniform": false,
+      "wrapped": true,
+      "init": "identity",
+      "block_parameters": 178529536,
+      "source": "layer_grow"
+    }
+  ],
+  "base_adapters": [
+    "outputs/sft-ds-assistant/adapter",
+    "outputs/sft-layer-lora/checkpoint-16000"
+  ]
+}
