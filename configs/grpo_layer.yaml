@@ -157,7 +157,7 @@ data:
   # eval loop at all currently (prepare_grpo_dataset builds only a train split; run_grpo_core never
   # passes GRPOTrainer an eval_dataset), so setting one would just be silently unused.
   reader: "gdrive"
-  dataset_name: "data/synthetic/dataset/grpo_math_train-*.jsonl"
+  dataset_name: "data/synthetic/dataset/grpo_train-*.jsonl"
   max_samples: 20000
   gdrive:
     zip_file_id: 1awUT6DVEBDGKp0oH5JbY5m23MLKMiAHH            # ds-assistant-grpo.zip, built via data_generator_grpo.sh
