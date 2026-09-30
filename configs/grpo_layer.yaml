@@ -70,7 +70,7 @@ model:
 layer_grow:
   # sft_layer.yaml's own run, pinned to a specific checkpoint -- see the header comment above for
   # why this isn't left pointed at the bare run directory.
-  previous_checkpoint: "outputs/sft-layer-grow/checkpoint-3750"
+  previous_checkpoint: "outputs/sft-layer-grow/checkpoint-250"
 
   # Google Drive fallback for previous_checkpoint, same reasoning as sft_layer.yaml's. Nothing
   # uploaded yet as of this writing -- outputs/sft-layer-grow is still mid-run locally -- so this
@@ -79,8 +79,8 @@ layer_grow:
   # same reasoning as sft_layer.yaml's own cache_dir note, so a zip of just that checkpoint's
   # contents lands directly where a local run would have written it.
   gdrive:
-    zip_file_id: 18edzBlAqXcHoTA5XRjBCNtVD8ViwngWf
-    cache_dir: "outputs/sft-layer-grow/checkpoint-3750"
+    zip_file_id: 11J-UO7J1BgMgN49H5ri5z-zxU1uwSMHG
+    cache_dir: "outputs/sft-layer-grow/checkpoint-250"
 
   # Position(s) this round touches, 0-based, checked against previous_checkpoint's own layer
   # count -- 26 layers (0-23 base, 24/25 grown -- see the header comment above for why that's 3
@@ -89,7 +89,7 @@ layer_grow:
   # *existing* layer instead: no new block is spliced in, that layer is just unfrozen and
   # fine-tuned further from previous_checkpoint's own weights for it -- both kinds can appear in
   # the same list. See layer_grow/model.py's split_layers for the exact rule.
-  layers: [26]
+  layers: [28]
 
   # Hardcoded to layer 26's own shape rather than left null -- confirmed directly from
   # checkpoint-3750/model.safetensors's tensor shapes, not just the layer_grow.json sidecar:
@@ -160,7 +160,7 @@ data:
   dataset_name: "data/synthetic/dataset/grpo_math_train-*.jsonl"
   max_samples: 20000
   gdrive:
-    zip_file_id: 14RGS7eXPs2sGWOTRKlb3teWTANLjRB7W            # ds-assistant-grpo.zip, built via data_generator_grpo.sh
+    zip_file_id: 1awUT6DVEBDGKp0oH5JbY5m23MLKMiAHH            # ds-assistant-grpo.zip, built via data_generator_grpo.sh
     cache_dir: "data/synthetic/dataset"
 
 training:
