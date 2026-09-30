@@ -173,7 +173,7 @@ training:
   # ~step 270, see reward_set's note), and with no finished <output_dir>/model to continue from,
   # run_grpo_core resumes the newest checkpoint-N it finds there -- weights, optimizer and step
   # count from a run with a different batch shape and no system prompt.
-  output_dir: "outputs/grpo-layer-grow-run2"
+  output_dir: "outputs/grpo-layer-grow"
   num_train_epochs: 1          # max_steps overrides this
   max_steps: 2000
   # In trl==0.14.0 this counts *prompts*, each expanded into num_generations completions -- 1 x 4
