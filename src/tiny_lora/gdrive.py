@@ -12,10 +12,15 @@ Two ways to get the zip:
   file recently" on two different, freshly-shared files in a row, neither of which had actually
   been viewed enough times to earn that -- it is a response to the request pattern (scripted,
   cookie-less, large file), not real popularity.
-- `extract_from_drive_mount` -- mounts the caller's own Drive (Colab-only) and reads the file
-  directly, authenticated as its owner exactly like a browser download. Sidesteps the throttling
-  above entirely since Google never serves the anonymous-abuse response to an authenticated
-  request. Preferred when available; see `data.gdrive.mount_path` in a config's `data:` block.
+- `extract_from_drive_mount` -- reads the file straight off an *already*-mounted Drive,
+  authenticated as its owner exactly like a browser download. Sidesteps the throttling above
+  entirely since Google never serves the anonymous-abuse response to an authenticated request.
+  Preferred when available; see `data.gdrive.mount_path` in a config's `data:` block. Does NOT
+  mount Drive itself -- `layer_grow_install.sh`'s dataset-prep step runs this from a `poetry run`
+  subprocess, in its own venv, and `google.colab.drive.mount()` only works from the actual Colab
+  kernel process (it talks to the notebook frontend for the OAuth flow); mount Drive yourself
+  from a real notebook cell first. Once mounted it's an ordinary (FUSE) filesystem, visible to
+  every process on the VM, so nothing here needs to import `google.colab` at all.
 """
 
 from __future__ import annotations
@@ -45,25 +50,37 @@ def download_and_extract_zip(cache_dir: Path, zip_file_id: str, zip_name: str) -
     zip_path.unlink()
 
 
-def extract_from_drive_mount(cache_dir: Path, mount_path: str) -> None:
-    """Extract a zip straight from the caller's own mounted Google Drive into `cache_dir`.
+def extract_from_drive_mount(
+    cache_dir: Path, mount_path: str, drive_root: str = "/content/drive/MyDrive"
+) -> None:
+    """Extract a zip from an *already*-mounted Google Drive into `cache_dir`.
 
     `mount_path` is the file's path relative to "My Drive", e.g. "ds-assistant-grpo-v2.zip" for
     a file uploaded to Drive's root, or "some/folder/ds-assistant-grpo-v2.zip" for one filed in a
-    subfolder. Mounting is idempotent -- Colab's `drive.mount` no-ops (after re-prompting auth if
-    the session lost it) when `/content/drive` is already mounted, so calling this more than once
-    in a run is harmless.
-    """
-    try:
-        from google.colab import drive
-    except ImportError as exc:
-        raise ImportError(
-            "data.gdrive.mount_path only works inside a Google Colab runtime "
-            "(needs google.colab.drive). Use data.gdrive.zip_file_id instead outside Colab."
-        ) from exc
+    subfolder.
 
-    drive.mount("/content/drive")
-    source = Path("/content/drive/MyDrive") / mount_path
+    Does not mount Drive -- that has to happen from an actual Colab notebook cell, before running
+    whatever calls this (e.g. `bash layer_grow_install.sh`):
+
+        from google.colab import drive
+        drive.mount('/content/drive')
+
+    A `poetry run` subprocess (which is how the install script gets here) is a separate process in
+    its own venv; `drive.mount()` needs the real Colab kernel process to drive the OAuth flow, and
+    `google.colab` usually isn't even importable outside it. `/content/drive` itself is an ordinary
+    (FUSE) filesystem once mounted, though, so reading from it needs nothing Colab-specific.
+    """
+    root = Path(drive_root)
+    if not root.is_dir():
+        raise FileNotFoundError(
+            f"{root} not found -- Drive isn't mounted. From an actual Colab notebook cell (not "
+            "this script), run:\n\n"
+            "    from google.colab import drive\n"
+            "    drive.mount('/content/drive')\n\n"
+            "then re-run this."
+        )
+
+    source = root / mount_path
     if not source.is_file():
         raise FileNotFoundError(
             f"{source} not found on the mounted Drive. data.gdrive.mount_path should be the "
