@@ -4,23 +4,30 @@
 reduce to "get a zip from Drive, extract it into a cache dir" -- this module is just that step,
 plus the one bit of tidy-up ("Drive wrapped everything in a folder") that both need.
 
-Two ways to get the zip:
+Three ways to get the zip (in the priority `tiny_lora.data.ensure_gdrive_dataset` applies them):
 
+- `extract_local_zip` -- the zip is already sitting on the training machine's own disk (e.g.
+  uploaded straight into the Colab VM, no Drive involved at all). No network, no auth, nothing
+  Colab-specific; just an extract. Tried first since it needs the least to go right.
+- `extract_from_drive_mount` -- reads the file straight off an *already*-mounted Drive,
+  authenticated as its owner exactly like a browser download. Sidesteps `gdown`'s throttling
+  (below) entirely since Google never serves the anonymous-abuse response to an authenticated
+  request. Does NOT mount Drive itself -- `layer_grow_install.sh`'s dataset-prep step runs this
+  from a `poetry run` subprocess, in its own venv, and `google.colab.drive.mount()` only works
+  from the actual Colab kernel process (it talks to the notebook frontend for the OAuth flow);
+  mount Drive yourself from a real notebook cell first. Once mounted it's an ordinary (FUSE)
+  filesystem, visible to every process on the VM, so nothing here needs to import `google.colab`.
 - `download_and_extract_zip` -- `gdown`'s anonymous public-link download. Works with just a file
   id, no Colab dependency, but Google's abuse heuristics throttle anonymous requests for large
   ("can't scan for viruses") files hard: we hit "Too many users have viewed or downloaded this
   file recently" on two different, freshly-shared files in a row, neither of which had actually
   been viewed enough times to earn that -- it is a response to the request pattern (scripted,
-  cookie-less, large file), not real popularity.
-- `extract_from_drive_mount` -- reads the file straight off an *already*-mounted Drive,
-  authenticated as its owner exactly like a browser download. Sidesteps the throttling above
-  entirely since Google never serves the anonymous-abuse response to an authenticated request.
-  Preferred when available; see `data.gdrive.mount_path` in a config's `data:` block. Does NOT
-  mount Drive itself -- `layer_grow_install.sh`'s dataset-prep step runs this from a `poetry run`
-  subprocess, in its own venv, and `google.colab.drive.mount()` only works from the actual Colab
-  kernel process (it talks to the notebook frontend for the OAuth flow); mount Drive yourself
-  from a real notebook cell first. Once mounted it's an ordinary (FUSE) filesystem, visible to
-  every process on the VM, so nothing here needs to import `google.colab` at all.
+  cookie-less, large file), not real popularity. Last resort; kept for machines with neither a
+  local copy nor a Drive mount.
+
+All three leave the same mess a Drive folder-zip can leave (everything one level deeper than
+expected, in a directory named after the original folder) for the caller to clean up with
+`flatten_single_wrapper_dir`/`tiny_lora.data._flatten_dataset_dir`.
 """
 
 from __future__ import annotations
@@ -48,6 +55,20 @@ def download_and_extract_zip(cache_dir: Path, zip_file_id: str, zip_name: str) -
     with zipfile.ZipFile(zip_path) as archive:
         archive.extractall(cache_dir)
     zip_path.unlink()
+
+
+def extract_local_zip(cache_dir: Path, zip_path: str) -> None:
+    """Extract a zip already sitting on this machine's own disk into `cache_dir`."""
+    source = Path(zip_path)
+    if not source.is_file():
+        raise FileNotFoundError(
+            f"{source} not found. data.gdrive.local_zip_path should be the zip's path on this "
+            "machine (e.g. wherever you uploaded it in the Colab file browser)."
+        )
+
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(source) as archive:
+        archive.extractall(cache_dir)
 
 
 def extract_from_drive_mount(
