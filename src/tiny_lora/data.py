@@ -126,7 +126,11 @@ def ensure_gdrive_dataset(
     `mount_path` (an already-mounted Drive, Colab only, authenticated as the file's owner), then
     `zip_file_id` (`gdown`'s anonymous public-link download, which Google's abuse heuristics
     throttle hard for large files regardless of how many times the file has actually been viewed)
-    -- see `tiny_lora.gdrive`'s module docstring for why that order.
+    -- see `tiny_lora.gdrive`'s module docstring for why that order. Each of `local_zip_path` and
+    `mount_path` is a soft preference, not a hard requirement: if set but the file isn't actually
+    there (not uploaded yet, Drive not mounted), that's reported and the next option is tried
+    instead of failing outright -- only `zip_file_id` (the last option) raises for real, since
+    there's nothing left to fall back to.
 
     `data/synthetic/build.py` calls this too, so a build configured to append starts from the
     same bytes the trainer would have read. Keeping one implementation matters because the
@@ -138,18 +142,30 @@ def ensure_gdrive_dataset(
         return cache_dir
 
     if local_zip_path:
-        extract_local_zip(cache_dir, local_zip_path)
-    elif mount_path:
-        extract_from_drive_mount(cache_dir, mount_path)
-    elif zip_file_id:
+        try:
+            extract_local_zip(cache_dir, local_zip_path)
+            _flatten_dataset_dir(cache_dir)
+            return cache_dir
+        except FileNotFoundError as exc:
+            print(f"    {exc} -- trying the next data.gdrive.* option")
+
+    if mount_path:
+        try:
+            extract_from_drive_mount(cache_dir, mount_path)
+            _flatten_dataset_dir(cache_dir)
+            return cache_dir
+        except FileNotFoundError as exc:
+            print(f"    {exc} -- trying the next data.gdrive.* option")
+
+    if zip_file_id:
         download_and_extract_zip(cache_dir, zip_file_id, "_gdrive_dataset.zip")
-    else:
-        raise ValueError(
-            "one of data.gdrive.local_zip_path, data.gdrive.mount_path or "
-            "data.gdrive.zip_file_id must be set when data.reader is 'gdrive'."
-        )
-    _flatten_dataset_dir(cache_dir)
-    return cache_dir
+        _flatten_dataset_dir(cache_dir)
+        return cache_dir
+
+    raise ValueError(
+        "one of data.gdrive.local_zip_path, data.gdrive.mount_path or data.gdrive.zip_file_id "
+        "must be set when data.reader is 'gdrive', and at least one must actually be reachable."
+    )
 
 
 # Every shape `data/synthetic/build.py` can write -- if a zip nests any of these one or more
