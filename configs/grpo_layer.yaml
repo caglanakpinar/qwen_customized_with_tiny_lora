@@ -134,15 +134,15 @@ data:
   # the same glob. cache_dir here is just a plain path on the training machine -- nothing macOS-
   # or /Volumes-specific about it there.
   #
-  # gdrive.mount_path (preferred) vs gdrive.zip_file_id: `ensure_gdrive_dataset`
-  # (tiny_lora/data.py) tries mount_path first when set. zip_file_id goes through gdown's
-  # anonymous public-link download, which turned out to be unreliable for a file this size --
-  # "Too many users have viewed or downloaded this file recently" on two different, essentially
-  # unviewed files in a row (see tiny_lora/gdrive.py's module docstring); that's Google's abuse
-  # heuristic reacting to the request pattern (scripted, cookie-less, >100MB), not real
-  # popularity. mount_path instead has Colab mount the account's own Drive
-  # (google.colab.drive.mount) and reads the file authenticated as its owner, same as a browser
-  # download, which sidesteps that heuristic entirely.
+  # gdrive.local_zip_path / gdrive.mount_path / gdrive.zip_file_id, tried in that order by
+  # `ensure_gdrive_dataset` (tiny_lora/data.py): local_zip_path reads a zip already sitting on
+  # this machine's own disk (no network/auth -- what's set below, since the zip was uploaded
+  # straight into the Colab VM); mount_path reads one off an already-mounted Drive, authenticated
+  # as its owner; zip_file_id is gdown's anonymous public-link download, which turned out to be
+  # unreliable for a file this size -- "Too many users have viewed or downloaded this file
+  # recently" on two different, essentially unviewed files in a row (see tiny_lora/gdrive.py's
+  # module docstring); that's Google's abuse heuristic reacting to the request pattern (scripted,
+  # cookie-less, >100MB), not real popularity. Both local_zip_path and mount_path sidestep it.
   #
   # That fetch only happens once: ensure_gdrive_dataset skips it on every later run once cache_dir
   # is non-empty ("already populated" is checked by "has any files in it," not "has
@@ -166,13 +166,13 @@ data:
   # not run `layer_grow grpo` against this dataset_name until a reward_set for free-text
   # end-to-end/alt-model/diagnosis answers exists (see layer_grow/rewards.py).
   #
-  # gdrive.mount_path assumes ds-assistant-grpo-v2.zip was uploaded to the root of "My Drive" --
-  # adjust to e.g. "some/folder/ds-assistant-grpo-v2.zip" if it landed somewhere else.
-  # gdrive.zip_file_id is kept as a fallback for a non-Colab training machine: it's the new v2
-  # zip's id (not the old pre-v2 one), but as of this writing it's still hitting the same
-  # anonymous-download throttle mount_path exists to route around -- may clear on its own
-  # (Google's own estimate is up to 24h from the first hit) or may need cookie-based auth for
-  # gdown (see tiny_lora/gdrive.py's docstring) if it doesn't.
+  # gdrive.local_zip_path below assumes the zip was uploaded to /content/ on the Colab VM --
+  # adjust to wherever you actually put it (and note it's wiped when the VM recycles, unlike a
+  # Drive-hosted copy, so re-upload after a runtime restart). mount_path is left as a documented
+  # fallback requiring a Drive mount from an actual notebook cell first (tiny_lora/gdrive.py's
+  # docstring); zip_file_id is kept as a last-resort fallback for a non-Colab machine -- it's the
+  # new v2 zip's id (not the old pre-v2 one), but as of this writing it's still hitting the same
+  # anonymous-download throttle the other two exist to route around.
   #
   # dataset_name must live under gdrive.cache_dir below, not the Mac's own
   # /Volumes/PS2000W/ds-assistant-grpo-v2 -- load_raw_dataset globs dataset_name literally (see
@@ -183,12 +183,13 @@ data:
   # eval loop at all currently (prepare_grpo_dataset builds only a train split; run_grpo_core never
   # passes GRPOTrainer an eval_dataset), so setting one would just be silently unused. The v2 set
   # does write its own grpo_eval.jsonl into the same cache_dir, but nothing here reads it.
-  reader: "local"
+  reader: "gdrive"
   dataset_name: "data/synthetic/dataset/grpo_train-*.jsonl"
   max_samples: 20000
   gdrive:
-    mount_path: "ds-assistant-grpo-v2.zip"                    # tried first -- Colab Drive mount, sidesteps gdown's throttling
-    zip_file_id: null            # fallback for non-Colab machines -- currently also throttled, see note above
+    local_zip_path: "/content/ds-assistant-grpo-v2.zip"       # tried first -- adjust to wherever you uploaded it on the Colab VM
+    mount_path: "ds-assistant-grpo-v2.zip"                    # fallback -- Colab Drive mount, needs drive.mount() run first in a notebook cell
+    zip_file_id: 1KdEk7Z8uVcKaAVZezDwDvde5wXqhmFNe             # last-resort fallback -- currently also throttled, see note above
     cache_dir: "data/synthetic/dataset"
 
 training:
