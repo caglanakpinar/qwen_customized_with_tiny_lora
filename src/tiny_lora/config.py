@@ -50,11 +50,16 @@ class DataConfig:
     # applies to eval regardless of size, since scoring the full split on every eval_steps
     # (or in `tiny-lora eval`, which loads two full models) is often too slow to be worth it.
     max_eval_samples: int | None = None
-    # Google Drive file id (or full share URL) of the dataset zip. Used when reader="gdrive" and
-    # gdrive_mount_path is unset -- gdown's anonymous public-link download, which Google throttles
-    # hard for large files regardless of actual view count; see tiny_lora.gdrive's docstring.
+    # Google Drive file id (or full share URL) of the dataset zip. Lowest priority of the three
+    # gdrive_* fetch options (see tiny_lora.gdrive's docstring for the order and why) -- gdown's
+    # anonymous public-link download, which Google throttles hard for large files regardless of
+    # actual view count.
     gdrive_zip_file_id: str | None = None
-    # Preferred over gdrive_zip_file_id when set: the zip's path relative to "My Drive" (e.g.
+    # Highest priority when set: the zip's path on the training machine's own disk (e.g.
+    # "/content/ds-assistant-grpo-v2.zip" after uploading it straight into a Colab VM). No
+    # network or auth involved. See tiny_lora.gdrive's docstring.
+    gdrive_local_zip_path: str | None = None
+    # Second priority when set: the zip's path relative to "My Drive" (e.g.
     # "ds-assistant-grpo-v2.zip"), read via an authenticated Drive mount instead of gdown's
     # anonymous download -- Colab only (google.colab.drive). See tiny_lora.gdrive's docstring.
     gdrive_mount_path: str | None = None
