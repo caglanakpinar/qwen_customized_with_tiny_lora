@@ -3,9 +3,9 @@
 # everything except the block it just added, this keeps the whole trainable tail open.
 #
 # Starting point is outputs/sft-layer-grow/checkpoint-1500: an already-grown 28-layer model
-# (layers 0-27; 0-23 are the original base, 24-27 were added by earlier layer_expand/layer_grow
-# rounds). Its layer_grow.json records those rounds; check_growth_matches compares it against the
-# stack loaded from the checkpoint.
+# (layers 0-27; 0-23 are the original base). Its layer_grow.json records four rounds: layer 24
+# (1536d, from layer_expand), then layer 25 three times over at 3072d/16640/48 heads (layer_grow
+# kept appending at index 25, which is why the stack has 25, 26 and 27 at that shape).
 #
 # This round appends layer 28, widened to 6144d/33280 MLP/96 heads (see layer_grow below), making a
 # 29-layer model. Every block earlier rounds grew (24-27) plus the new layer 28 stays trainable;
@@ -66,7 +66,7 @@ layer_grow:
   # checkpoint-1500; see layer_grow.model.resolve_growth_shape) keeps them fixed.
   #
   # Roughly 690M params for this block alone (est.: ~77M attention + ~613M MLP), several times
-  # any block grown so far, on top of the already-trainable layers 24-27, against the same ~50k-row
+  # any block grown so far, on top of the already-trainable layers 24-27 (46.2M + 3 x 178.5M), against the same ~50k-row
   # dataset that already showed overfitting signs on layer 24's 46.2M alone (see README.md's
   # checkpoint-16000 interpretation). Worth watching eval_loss closely from step 1; the memory note
   # on per_device_train_batch_size applies even more.
@@ -101,11 +101,12 @@ data:
     cache_dir: "data/synthetic/dataset"
 
 training:
-  # Same directory checkpoint-1500 lives in. If it already holds a finished model/ or newer
-  # checkpoint-N from a run with a different round count, check_growth_matches will fail, or the
-  # Trainer will resume from that checkpoint-N as if it were this run's own -- point this at a
-  # fresh directory (e.g. outputs/sft-layer-grow-29) to avoid that.
-  output_dir: "outputs/sft-layer-grow"
+  # A fresh directory, not outputs/sft-layer-grow: that one holds checkpoint-1500's own run, whose
+  # layer_grow.json has four rounds (layer 24, then 25 three times). Pointing this round there
+  # fails check_growth_matches (its checkpoints belong to the old 28-layer shape and cannot be
+  # resumed into this 29-layer one), and the Trainer would otherwise resume from that run's
+  # newest checkpoint-N as if it were this run's own.
+  output_dir: "outputs/sft-layer-grow-29"
   # No training.gdrive block here (yet): this output_dir starts empty -- there is no zipped
   # checkpoint-N for *this* run to fall back to on a fresh machine until one has actually been
   # trained and uploaded. Add one here once you have a run worth resuming from elsewhere.
