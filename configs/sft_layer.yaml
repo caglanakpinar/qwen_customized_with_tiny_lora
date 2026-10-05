@@ -55,7 +55,7 @@ layer_grow:
   # wrote it, layer_grow.json included -- to train on a machine that doesn't have it locally.
   # cache_dir matches previous_checkpoint exactly, so the zip lands where that path expects it.
   gdrive:
-    zip_file_id: 15NYnthiKYeyjehpHlHYmT6IvvwtQaxtU
+    zip_file_id: 12SXntx4zDg7JOUajbjO2h_eYk4V_XsrY
     cache_dir: "outputs/sft-layer-grow/checkpoint-1500"
 
   # Position(s) this round's new block(s) take in the *final* stack, 0-based. checkpoint-1500 is
