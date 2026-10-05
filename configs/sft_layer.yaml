@@ -60,7 +60,7 @@ layer_grow:
 
   # Position(s) this round's new block(s) take in the *final* stack, 0-based. checkpoint-1500 is
   # already 28 layers (0-23 base, 24 and 25 grown), so [26] appends one more, giving 27.
-  layers: [28]
+  layers: [29]
 
   # Shape of this round's new block: the same as layer 25's, spelled out rather than left null.
   # Null on all four would inherit exactly this from checkpoint-1500's newest round (see
@@ -76,9 +76,13 @@ layer_grow:
   # params, ~45% of the ~897M-parameter 27-layer model (up from 224.7M/31% in round 2), against
   # the same ~50k-row dataset that already showed overfitting signs on layer 24's 46.2M alone
   # (see README.md's checkpoint-16000 interpretation). Worth watching eval_loss closely from step 1.
-  hidden_size: 3072
-  intermediate_size: 16640
-  num_attention_heads: 48
+  #
+  # Layer 29 is widened to 6144 = 96 heads x head_dim 64, with intermediate_size doubled to 33280
+  # to keep the same 5.42 ratio. Roughly 690M params for this block alone (est.: ~77M attention +
+  # ~613M MLP), ~4x layer 25's -- the memory note on per_device_train_batch_size applies even more.
+  hidden_size: 6144
+  intermediate_size: 33280
+  num_attention_heads: 96
   num_key_value_heads: null    # null -> the base model's 2, same as layer 25
 
   # "identity" zeroes this round's block's output projections, so it starts as a residual
@@ -103,7 +107,7 @@ data:
   max_samples: 50000            # cap on training rows read from the glob
   max_eval_samples: 500         # eval runs every eval_steps and scores this whole split each time
   gdrive:
-    zip_file_id: 15pQ1viBLNzA_6dhGMZCs_LTmusT6BLoD
+    zip_file_id: 1jTTWwmxlAtw24iwZdHeC9Dj1N0aay3wK
     cache_dir: "data/synthetic/dataset"
 
 training:
