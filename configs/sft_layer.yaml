@@ -51,7 +51,7 @@ layer_grow:
   # assumes; layer_grow rejects a mismatch up front.
   # cache_dir matches previous_checkpoint exactly, so the zip lands where that path expects it.
   gdrive:
-    zip_file_id: 1F0kIcpJjKemSGxZZNidZmqDfEsj4Vuzq
+    zip_file_id: 1131ZUocrp5jUQRdwGQZHAKYghFPidXWb
     cache_dir: "outputs/sft-layer-grow-29/checkpoint-750"
 
   # Position(s) this round's new block(s) take in the *final* stack, 0-based. checkpoint-1500 is
