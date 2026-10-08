@@ -8,7 +8,7 @@
 # kept appending at index 25, which is why the stack has 25, 26 and 27 at that shape).
 #
 # This round appends layer 28, widened to 6144d/33280 MLP/96 heads (see layer_grow below), making a
-# 29-layer model. Every block earlier rounds grew (24-27) plus the new layer 28 stays trainable;
+# 30-layer model. Every block earlier rounds grew (24-27) plus the new layer 28 stays trainable;
 # only the original base (0-23, already carrying the merged TinyLoRA + layer_lora weights) stays
 # frozen.
 #
@@ -30,9 +30,9 @@
 #     poetry run layer_grow sft --no-quant
 #
 # Grow further shapes/positions per-run without editing this file -- e.g. a next round, on top of
-# this round's finished 29-layer model:
-#     poetry run layer_grow sft --previous-checkpoint outputs/sft-layer-grow-28 --layers 29 \
-#         --output-dir outputs/sft-layer-grow-29 --no-quant
+# this round's finished 30-layer model:
+#     poetry run layer_grow sft --previous-checkpoint outputs/sft-layer-grow-29 --layers 30 \
+#         --output-dir outputs/sft-layer-grow-30 --no-quant
 
 model:
   model_name_or_path: "Qwen/Qwen2.5-0.5B-Instruct"  # base model pulled from the Hugging Face Hub
@@ -43,7 +43,7 @@ model:
 
 layer_grow:
   # The 28-layer checkpoint this round grows from -- see the header comment above.
-  previous_checkpoint: "outputs/sft-layer-grow-29/checkpoint-750"
+  previous_checkpoint: "outputs/sft-layer-grow-29/checkpoint-1250"
 
   # Google Drive fallback for previous_checkpoint, used only when nothing usable is found at that
   # path locally. zip_file_id must point to a zip of checkpoint-1500 -- the whole directory as the
@@ -51,12 +51,12 @@ layer_grow:
   # assumes; layer_grow rejects a mismatch up front.
   # cache_dir matches previous_checkpoint exactly, so the zip lands where that path expects it.
   gdrive:
-    zip_file_id: 1131ZUocrp5jUQRdwGQZHAKYghFPidXWb
-    cache_dir: "outputs/sft-layer-grow-29/checkpoint-750"
+    zip_file_id: 1pOTtA8VNhTE5zA35c8Y6OD-kWcc-w3v_
+    cache_dir: "outputs/sft-layer-grow-29/checkpoint-1250"
 
   # Position(s) this round's new block(s) take in the *final* stack, 0-based. checkpoint-1500 is
   # already 28 layers (0-27), so [28] appends one more, giving 29.
-  layers: [28]
+  layers: [29]
 
   # Shape of this round's new block: 6144 = 96 heads x head_dim 64. hidden_size must equal
   # num_attention_heads * 64, and head_dim itself cannot change (shared rotary tables and KV cache
@@ -97,16 +97,16 @@ data:
   max_samples: 50000            # cap on training rows read from the glob
   max_eval_samples: 500         # eval runs every eval_steps and scores this whole split each time
   gdrive:
-    zip_file_id: 1HoRwvZRulVoTKXfvIzatl2NemQb7XIhv
+    zip_file_id: 1OIpO7MNVUyLrytjQwhJu-i2U5mJSmVkh
     cache_dir: "data/synthetic/dataset"
 
 training:
   # A fresh directory, not outputs/sft-layer-grow: that one holds checkpoint-1500's own run, whose
   # layer_grow.json has four rounds (layer 24, then 25 three times). Pointing this round there
   # fails check_growth_matches (its checkpoints belong to the old 28-layer shape and cannot be
-  # resumed into this 29-layer one), and the Trainer would otherwise resume from that run's
+  # resumed into this 30-layer one), and the Trainer would otherwise resume from that run's
   # newest checkpoint-N as if it were this run's own.
-  output_dir: "outputs/sft-layer-grow-29"
+  output_dir: "outputs/sft-layer-grow-30"
   # No training.gdrive block here (yet): this output_dir starts empty -- there is no zipped
   # checkpoint-N for *this* run to fall back to on a fresh machine until one has actually been
   # trained and uploaded. Add one here once you have a run worth resuming from elsewhere.
