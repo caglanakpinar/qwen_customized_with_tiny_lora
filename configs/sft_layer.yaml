@@ -43,7 +43,7 @@ model:
 
 layer_grow:
   # The 28-layer checkpoint this round grows from -- see the header comment above.
-  previous_checkpoint: "outputs/sft-layer-grow-30/checkpoint-750"
+  previous_checkpoint: "outputs/sft-layer-grow-30/checkpoint-1000"
 
   # Google Drive fallback for previous_checkpoint, used only when nothing usable is found at that
   # path locally. zip_file_id must point to a zip of checkpoint-1500 -- the whole directory as the
@@ -51,8 +51,8 @@ layer_grow:
   # assumes; layer_grow rejects a mismatch up front.
   # cache_dir matches previous_checkpoint exactly, so the zip lands where that path expects it.
   gdrive:
-    zip_file_id: 12t7XsgekWYkPr7kev6n8O_8WZrBDYDBY
-    cache_dir: "outputs/sft-layer-grow-30/checkpoint-750"
+    zip_file_id: 10qRowMtt-8og7LEsFxNUOywKLPm8I9uq
+    cache_dir: "outputs/sft-layer-grow-30/checkpoint-1000"
 
   # Position(s) this round's new block(s) take in the *final* stack, 0-based. checkpoint-1500 is
   # already 28 layers (0-27), so [28] appends one more, giving 29.
