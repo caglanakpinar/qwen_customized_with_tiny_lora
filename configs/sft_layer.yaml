@@ -43,7 +43,7 @@ model:
 
 layer_grow:
   # The 28-layer checkpoint this round grows from -- see the header comment above.
-  previous_checkpoint: "outputs/sft-layer-grow-30/checkpoint-1000"
+  previous_checkpoint: "outputs/sft-layer-grow-30/checkpoint-1250"
 
   # Google Drive fallback for previous_checkpoint, used only when nothing usable is found at that
   # path locally. zip_file_id must point to a zip of checkpoint-1500 -- the whole directory as the
@@ -51,8 +51,8 @@ layer_grow:
   # assumes; layer_grow rejects a mismatch up front.
   # cache_dir matches previous_checkpoint exactly, so the zip lands where that path expects it.
   gdrive:
-    zip_file_id: 1BkbTn8woScLHaYIQe5djuFvCVdENHmFR
-    cache_dir: "outputs/sft-layer-grow-30/checkpoint-1000"
+    zip_file_id: 1tpHpfO-o_K8qvtMxxcA1d_2XQNbbJHKL
+    cache_dir: "outputs/sft-layer-grow-30/checkpoint-1250"
 
   # Position(s) this round's new block(s) take in the *final* stack, 0-based. checkpoint-1500 is
   # already 28 layers (0-27), so [28] appends one more, giving 29.
@@ -97,7 +97,7 @@ data:
   max_samples: 50000            # cap on training rows read from the glob
   max_eval_samples: 500         # eval runs every eval_steps and scores this whole split each time
   gdrive:
-    zip_file_id: 1Kps0ARzB5u0c4bybtGd6E13moSzFucMr
+    zip_file_id: 1XbXPSxj4ftGbU6hljl7VFRZrKDa-AC3a
     cache_dir: "data/synthetic/dataset"
 
 training:
