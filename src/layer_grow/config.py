@@ -65,6 +65,15 @@ class LayerGrowConfig:
     # layer_expand.init_from_checkpoint.
     init_from_checkpoint: str | None = "auto"
 
+    # False (the default): every block any round has ever grown, plus every layer any round has
+    # refined, trains together -- see `layer_grow.model.freeze_all_growth`.
+    # True: train ONLY the layer(s) named in `layers` this round; every other block, grown or
+    # base, stays frozen. This is what lets `layer_grow_multiple_run.sh` fine-tune one extra
+    # layer at a time and paste it back into the model, instead of re-opening the whole grown
+    # tail on every pass. The sidecar still records the round the usual way, so a later run
+    # with this left False sees the layer as refined and trains it along with the rest.
+    train_only_listed_layers: bool = False
+
     # Google Drive fallback for `previous_checkpoint`, used only when nothing usable is found at
     # that path locally -- e.g. a fresh machine that has not trained or downloaded
     # outputs/sft-layer-expand-wide itself yet. Read from a `layer_grow.gdrive.{zip_file_id,
