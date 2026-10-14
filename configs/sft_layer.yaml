@@ -42,14 +42,17 @@ model:
   attn_implementation: null    # let transformers pick (e.g. sdpa); set "flash_attention_2" where supported
 
 layer_grow:
-  # The 28-layer checkpoint this round grows from -- see the header comment above.
-  previous_checkpoint: "outputs/sft-layer-grow-30/checkpoint-1500"
+  # The checkpoint this round grows from. This is the model layer_grow_multiple_run.sh downloads
+  # and keeps updating (outputs/layer-grow-multi/model, its WORK_DIR default), so whatever that
+  # script has trained so far is what this config continues from. It is tried first; the Drive zip
+  # below is only used when it does not exist on this machine.
+  previous_checkpoint: "outputs/layer-grow-multi/model"
 
-  # Google Drive fallback for previous_checkpoint, used only when nothing usable is found at that
-  # path locally. zip_file_id must point to a zip of checkpoint-1500 -- the whole directory as the
-  # Trainer wrote it, layer_grow.json included. Its stack must be the 28 layers `layers` below
-  # assumes; layer_grow rejects a mismatch up front.
-  # cache_dir matches previous_checkpoint exactly, so the zip lands where that path expects it.
+  # Fallback for a machine with neither the path above nor the cache_dir below: downloads this zip
+  # into cache_dir. zip_file_id must point to a zip of checkpoint-1500 -- the whole directory as the
+  # Trainer wrote it, layer_grow.json included. layer_grow rejects a stack that does not match.
+  # Order of resolution: previous_checkpoint -> cache_dir (reused as-is if it already holds a
+  # checkpoint, no download) -> download. Delete this block to make a missing local model an error.
   gdrive:
     zip_file_id: 1io93vRQEFKhskozdU_cqPQAQULEpSOu_
     cache_dir: "outputs/sft-layer-grow-30/checkpoint-1500"
