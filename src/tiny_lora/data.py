@@ -23,7 +23,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from datasets import Dataset, concatenate_datasets, load_dataset
+from datasets import Dataset, load_dataset
 
 from tiny_lora.config import DataConfig
 from tiny_lora.gdrive import (
@@ -95,19 +95,22 @@ def _load_jsonl_dataset(data_files: list[str]) -> Dataset:
 
 def _load_until(data_files: list[str], max_samples: int) -> Dataset:
     """Read shards in order until `max_samples` rows are available, then truncate."""
-    loaded: Dataset | None = None
+    # Records are collected across shards and turned into ONE Dataset at the end. Building a
+    # Dataset per shard and concatenating them fails whenever shards infer different Arrow
+    # schemas -- e.g. tool-call `arguments` structs whose key sets differ from shard to shard
+    # ("The features can't be aligned because the key messages ... has unexpected type").
+    # One from_list over every row unifies the key sets instead, same as _load_jsonl_dataset.
+    records: list[dict] = []
     for path in data_files:
-        shard = _load_jsonl_dataset([path])
-        loaded = shard if loaded is None else concatenate_datasets([loaded, shard])
-        if len(loaded) >= max_samples:
+        records.extend(_load_jsonl_records(path))
+        if len(records) >= max_samples:
             break
-    assert loaded is not None  # _resolve_data_files never returns an empty list
-    if len(loaded) < max_samples:
+    if len(records) < max_samples:
         raise ValueError(
-            f"max_samples={max_samples} exceeds the {len(loaded)} rows across "
+            f"max_samples={max_samples} exceeds the {len(records)} rows across "
             f"{len(data_files)} shard(s)."
         )
-    return loaded.select(range(max_samples))
+    return Dataset.from_list(records[:max_samples])
 
 
 def ensure_gdrive_dataset(
