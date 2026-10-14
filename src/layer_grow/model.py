@@ -446,7 +446,8 @@ def load_layer_grow_model(model_cfg: ModelConfig, grow_cfg: LayerGrowConfig, out
       3. splice in this round's new block, identity-initialised, if `layers` named one,
       4. load this round's own previous weights over the top if there is one,
       5. freeze the base only; every block from every round, plus every refined existing layer,
-         stays trainable.
+         stays trainable -- unless `train_only_listed_layers` is set, in which case only the
+         layer(s) named in `layers` this round train and everything else is frozen.
     """
     if not grow_cfg.previous_checkpoint:
         raise ValueError(
@@ -519,7 +520,10 @@ def load_layer_grow_model(model_cfg: ModelConfig, grow_cfg: LayerGrowConfig, out
     if init_checkpoint is not None:
         load_expanded_weights(model, init_checkpoint, new_layers or refine_layers)
 
-    trainable, total = freeze_all_growth(model, spec)
+    if grow_cfg.train_only_listed_layers:
+        trainable, total = freeze_except(model, sorted(set(new_layers) | set(refine_layers)))
+    else:
+        trainable, total = freeze_all_growth(model, spec)
     write_sidecar(output_dir, spec)
 
     if new_layers:
@@ -529,11 +533,18 @@ def load_layer_grow_model(model_cfg: ModelConfig, grow_cfg: LayerGrowConfig, out
             f"This round also fine-tunes existing layer(s) {refine_layers} in place, continuing "
             f"from their weights in {previous_checkpoint} -- no architecture change."
         )
-    print(
-        f"Trainable {trainable:,} / {total:,} params ({100 * trainable / total:.2f}%) -- "
-        f"every block from every round ({all_grown_layers(spec)}) plus every refined layer "
-        f"({all_refined_layers(spec)}), base frozen."
-    )
+    if grow_cfg.train_only_listed_layers:
+        print(
+            f"Trainable {trainable:,} / {total:,} params ({100 * trainable / total:.2f}%) -- "
+            f"ONLY layer(s) {sorted(set(new_layers) | set(refine_layers))} "
+            "(layer_grow.train_only_listed_layers); every other block is frozen."
+        )
+    else:
+        print(
+            f"Trainable {trainable:,} / {total:,} params ({100 * trainable / total:.2f}%) -- "
+            f"every block from every round ({all_grown_layers(spec)}) plus every refined layer "
+            f"({all_refined_layers(spec)}), base frozen."
+        )
     return model, init_checkpoint
 
 
