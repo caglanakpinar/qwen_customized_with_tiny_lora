@@ -152,7 +152,7 @@ training:
   # (46.2M params) already showed overfitting signs (see README.md). Watch eval_loss from the
   # first eval_steps.
   early_stopping: true
-  early_stopping_patience: 5
+  early_stopping_patience: 2
   # See sft_layer_expand.yaml's note: 0.0 counts any decrease, however small, as improvement and
   # can let a plateaued run grind on for thousands of extra steps. This carries the same fix.
-  early_stopping_threshold: 0.002
+  early_stopping_threshold: 0.007
